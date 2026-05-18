@@ -1,0 +1,115 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 6% 4%;
+    --foreground: 0 0% 98%;
+    --card: 240 6% 6%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 6% 6%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4% 12%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 4% 12%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 4% 14%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 4% 14%;
+    --input: 240 4% 14%;
+    --ring: 217 91% 60%;
+    --radius: 0.75rem;
+  }
+}
+
+* { border-color: hsl(var(--border)); }
+html, body { background: #09090b; color: #fafafa; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+/* Glass surfaces */
+.glass {
+  background: rgba(24, 24, 27, 0.55);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(63, 63, 70, 0.5);
+}
+.glass-strong {
+  background: rgba(24, 24, 27, 0.78);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  border: 1px solid rgba(63, 63, 70, 0.6);
+}
+
+/* Grid pattern background */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(63,63,70,0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(63,63,70,0.15) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Aurora glow */
+.aurora::before {
+  content: '';
+  position: fixed;
+  inset: -20%;
+  background:
+    radial-gradient(600px circle at 15% 20%, rgba(59,130,246,0.18), transparent 50%),
+    radial-gradient(800px circle at 85% 10%, rgba(139,92,246,0.12), transparent 50%),
+    radial-gradient(700px circle at 50% 90%, rgba(34,197,94,0.08), transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(63,63,70,0.6); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(82,82,91,0.8); }
+
+/* Pulse animation for SLA warning */
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+}
+.pulse-red { animation: pulse-red 2s infinite; }
+
+@keyframes pulse-crimson {
+  0%, 100% { box-shadow: 0 0 20px 0 rgba(220, 38, 38, 0.4); }
+  50% { box-shadow: 0 0 30px 4px rgba(220, 38, 38, 0.6); }
+}
+.pulse-crimson { animation: pulse-crimson 2.5s infinite; }
+
+/* Fat-finger inputs for mobile */
+.fat-input {
+  min-height: 56px;
+  font-size: 16px;
+}
+
+/* Hide scrollbar on horizontal kanban */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
