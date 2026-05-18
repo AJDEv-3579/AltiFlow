@@ -19,7 +19,7 @@ export default function RootLayout({ children }) {
       <head>
         <script dangerouslySetInnerHTML={{__html:'window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);'}} />
       </head>
-      <body className="bg-[#09090b] text-zinc-100 antialiased">
+      <body className="text-zinc-100 antialiased">
         {children}
         <Toaster theme="dark" position="top-right" toastOptions={{
           style: {

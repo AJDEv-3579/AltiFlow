@@ -6,12 +6,13 @@ import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors, DragOverlay,
 } from '@dnd-kit/core'
 import { toast } from 'sonner'
+import TimeBackdrop, { useTimeOfDay, PERIOD_ACCENTS, setPeriodOverride } from '@/components/TimeBackdrop'
 import {
   Activity, AlertTriangle, ArrowRight, Building2, ChevronDown, ChevronRight,
   ClipboardList, Clock, Command, FileWarning, Layers, LogOut, MapPin, Menu, Package,
   Plane, Plus, Radar, RefreshCw, Rocket, Search, Settings, Shield, ShieldAlert,
   Sparkles, Trash2, Upload, User, Users, X, Camera, FileCheck, Zap, ChevronLeft,
-  CheckCircle2, Lock, Hash, Calendar, Box, Server, BarChart3, Bell,
+  CheckCircle2, Lock, Hash, Calendar, Box, Server, BarChart3, Bell, Sunrise, Sunset, Moon as MoonIcon, Sun as SunIcon,
 } from 'lucide-react'
 
 // ============== API HELPER ==============
@@ -123,12 +124,69 @@ function Toggle({ value, onChange, label, hint }) {
 
 // ============== AURORA BG ==============
 function Backdrop() {
+  return <TimeBackdrop />
+}
+
+// ============== TIME PERIOD CHIP ==============
+function PeriodChip() {
+  const { period, date, override } = useTimeOfDay(60000)
+  const meta = PERIOD_ACCENTS[period]
+  const Icon = period === 'night' ? MoonIcon : period === 'sunset' ? Sunset : period === 'dawn' ? Sunrise : SunIcon
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   return (
-    <div className="fixed inset-0 -z-10 overflow-hidden bg-[#09090b]">
-      <div className="absolute inset-0 bg-grid opacity-40" />
-      <div className="absolute -top-40 -right-40 w-[600px] h-[600px] rounded-full bg-blue-500/10 blur-3xl" />
-      <div className="absolute top-1/3 -left-40 w-[600px] h-[600px] rounded-full bg-violet-500/10 blur-3xl" />
-      <div className="absolute bottom-0 right-1/3 w-[500px] h-[500px] rounded-full bg-emerald-500/5 blur-3xl" />
+    <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/30 border border-white/10 backdrop-blur-md">
+      <Icon size={13} style={{ color: meta.primary }} />
+      <span className="text-xs text-zinc-200">{meta.name}{override && ' (preview)'}</span>
+      <span className="text-[10px] text-zinc-400 font-mono">{time}</span>
+    </div>
+  )
+}
+
+// ============== PERIOD PREVIEW SWITCHER ==============
+function PeriodSwitcher() {
+  const { period, override } = useTimeOfDay(60000)
+  const [open, setOpen] = useState(false)
+  const periods = [
+    { k: 'dawn', l: 'Dawn', i: Sunrise },
+    { k: 'morning', l: 'Morning', i: SunIcon },
+    { k: 'day', l: 'Day', i: SunIcon },
+    { k: 'sunset', l: 'Sunset', i: Sunset },
+    { k: 'twilight', l: 'Twilight', i: MoonIcon },
+    { k: 'night', l: 'Night', i: MoonIcon },
+  ]
+  return (
+    <div className="fixed bottom-4 right-4 z-50">
+      <AnimatePresence>
+        {open && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+            className="mb-2 p-2 rounded-2xl glass-strong border border-white/10 flex flex-col gap-1 min-w-[180px]">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-400 px-2 py-1">Preview scene</div>
+            {periods.map(p => {
+              const meta = PERIOD_ACCENTS[p.k]
+              const active = period === p.k
+              return (
+                <button key={p.k} onClick={() => { setPeriodOverride(p.k); setOpen(false) }}
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition ${active ? 'bg-white/10 text-white' : 'text-zinc-300 hover:bg-white/5'}`}>
+                  <span className="w-2 h-2 rounded-full" style={{ background: meta.primary }} />
+                  <p.i size={13} />{p.l}
+                </button>
+              )
+            })}
+            {override && (
+              <button onClick={() => { setPeriodOverride(null); setOpen(false) }}
+                className="flex items-center gap-2 px-2 py-1.5 mt-1 rounded-lg text-xs text-zinc-400 hover:bg-white/5 border-t border-white/10">
+                <RefreshCw size={12} />Use real time
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <button onClick={() => setOpen(o => !o)}
+        className="w-12 h-12 rounded-full glass-strong border border-white/10 flex items-center justify-center hover:scale-105 transition shadow-2xl"
+        style={{ boxShadow: `0 0 30px ${PERIOD_ACCENTS[period].glow}` }}
+        title="Preview backdrop scene">
+        <Sparkles size={18} style={{ color: PERIOD_ACCENTS[period].primary }} />
+      </button>
     </div>
   )
 }
@@ -661,12 +719,13 @@ function Topbar({ user, onLogout, title, subtitle }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="hidden md:flex items-center gap-2 text-xs text-zinc-400 px-3 py-1.5 rounded-lg bg-zinc-900/60 border border-zinc-800">
+          <PeriodChip />
+          <div className="hidden md:flex items-center gap-2 text-xs text-zinc-400 px-3 py-1.5 rounded-lg bg-black/30 border border-white/10">
             <User size={12} />{user.username}
             <span className="text-zinc-700">·</span>
             <span className="text-zinc-500">{user.role}</span>
           </div>
-          <button onClick={onLogout} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400"><LogOut size={16} /></button>
+          <button onClick={onLogout} className="p-2 hover:bg-white/10 rounded-lg text-zinc-300"><LogOut size={16} /></button>
         </div>
       </div>
     </div>
@@ -1056,15 +1115,16 @@ function App() {
     return (
       <div className="min-h-screen flex items-center justify-center relative">
         <Backdrop />
-        <div className="text-zinc-500 text-sm flex items-center gap-2"><RefreshCw className="animate-spin" size={14} /> Loading Altiflow…</div>
+        <PeriodSwitcher />
+        <div className="text-zinc-300 text-sm flex items-center gap-2 px-4 py-2 rounded-full glass"><RefreshCw className="animate-spin" size={14} /> Loading Altiflow…</div>
       </div>
     )
   }
-  if (!user) return <Login onLogin={setUser} />
-  if (user.must_change_password) return <ChangePassword user={user} onDone={loadMe} />
-  if (user.role === 'Admin') return <AdminApp user={user} onLogout={logout} />
-  if (user.role === 'Team') return <TeamApp user={user} onLogout={logout} />
-  if (user.role === 'Client') return <ClientApp user={user} onLogout={logout} />
+  if (!user) return <><Login onLogin={setUser} /><PeriodSwitcher /></>
+  if (user.must_change_password) return <><ChangePassword user={user} onDone={loadMe} /><PeriodSwitcher /></>
+  if (user.role === 'Admin') return <><AdminApp user={user} onLogout={logout} /><PeriodSwitcher /></>
+  if (user.role === 'Team') return <><TeamApp user={user} onLogout={logout} /><PeriodSwitcher /></>
+  if (user.role === 'Client') return <><ClientApp user={user} onLogout={logout} /><PeriodSwitcher /></>
   return <div>Unknown role</div>
 }
 

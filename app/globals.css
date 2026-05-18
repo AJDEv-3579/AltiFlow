@@ -31,7 +31,9 @@
 
 * { border-color: hsl(var(--border)); }
 html, body { background: #09090b; color: #fafafa; }
+html { background: #000; }
 body {
+  background: transparent !important;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -40,18 +42,20 @@ body {
 
 .font-mono { font-family: 'JetBrains Mono', monospace; }
 
-/* Glass surfaces */
+/* Glass surfaces - deeper opacity for readability on colorful backdrops */
 .glass {
-  background: rgba(24, 24, 27, 0.55);
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(63, 63, 70, 0.5);
+  background: rgba(9, 9, 11, 0.55);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 0 0 rgba(255,255,255,0.04) inset, 0 10px 40px -10px rgba(0,0,0,0.5);
 }
 .glass-strong {
-  background: rgba(24, 24, 27, 0.78);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
-  border: 1px solid rgba(63, 63, 70, 0.6);
+  background: rgba(9, 9, 11, 0.78);
+  backdrop-filter: blur(32px) saturate(160%);
+  -webkit-backdrop-filter: blur(32px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 1px 0 0 rgba(255,255,255,0.05) inset, 0 20px 60px -10px rgba(0,0,0,0.6);
 }
 
 /* Grid pattern background */
