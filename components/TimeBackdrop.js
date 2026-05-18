@@ -201,6 +201,145 @@ function MountainSilhouette({ period }) {
   )
 }
 
+// Drone hovering over the scene, occasionally firing a scan beam
+function Drone({ period }) {
+  // Choose a top position based on period (lower during night so silhouetted against moon)
+  const yPct = 38
+  const beamColor = period === 'night' || period === 'twilight' ? '#a78bfa'
+    : period === 'sunset' || period === 'dawn' ? '#fbbf24'
+    : '#60a5fa'
+  const propColor = period === 'night' ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.7)'
+
+  return (
+    <motion.div
+      className="absolute pointer-events-none"
+      style={{ top: `${yPct}%`, left: 0, width: '100%' }}
+      // horizontal patrol across the sky
+      initial={{ x: '-12vw' }}
+      animate={{ x: ['-12vw', '60vw', '20vw', '85vw', '40vw', '-12vw'] }}
+      transition={{ duration: 60, repeat: Infinity, ease: 'easeInOut', times: [0, 0.22, 0.45, 0.65, 0.85, 1] }}
+    >
+      <motion.div
+        // vertical hover bob
+        animate={{ y: [0, -8, 0, -4, 0] }}
+        transition={{ duration: 3.6, repeat: Infinity, ease: 'easeInOut' }}
+        className="relative"
+        style={{ width: 120, height: 80 }}
+      >
+        {/* Scan beam — cone of light shining down */}
+        <motion.div
+          className="absolute left-1/2 top-[34px] origin-top"
+          style={{
+            transform: 'translateX(-50%)',
+            width: 0,
+            height: 0,
+            borderLeft: '60px solid transparent',
+            borderRight: '60px solid transparent',
+            borderTop: `260px solid ${beamColor}`,
+            filter: 'blur(2px)',
+            opacity: 0.16,
+          }}
+          animate={{ opacity: [0.05, 0.22, 0.05] }}
+          transition={{ duration: 3.4, repeat: Infinity, ease: 'easeInOut' }}
+        />
+        {/* Soft glow under the drone */}
+        <div className="absolute left-1/2 top-[20px] -translate-x-1/2 w-24 h-24 rounded-full"
+          style={{
+            background: `radial-gradient(circle, ${beamColor}33 0%, transparent 65%)`,
+            filter: 'blur(8px)',
+          }}
+        />
+
+        {/* Drone body SVG */}
+        <svg viewBox="0 0 120 60" width="120" height="60" className="relative" style={{ filter: 'drop-shadow(0 6px 12px rgba(0,0,0,0.55))' }}>
+          {/* arms */}
+          <line x1="22" y1="22" x2="40" y2="32" stroke="#27272a" strokeWidth="4" strokeLinecap="round" />
+          <line x1="98" y1="22" x2="80" y2="32" stroke="#27272a" strokeWidth="4" strokeLinecap="round" />
+          <line x1="22" y1="42" x2="40" y2="32" stroke="#27272a" strokeWidth="4" strokeLinecap="round" />
+          <line x1="98" y1="42" x2="80" y2="32" stroke="#27272a" strokeWidth="4" strokeLinecap="round" />
+          {/* body */}
+          <rect x="46" y="24" width="28" height="16" rx="4" fill="#18181b" stroke="#3f3f46" strokeWidth="0.6" />
+          <rect x="50" y="27" width="20" height="3" fill={beamColor} opacity="0.7" />
+          {/* tiny LED */}
+          <circle cx="60" cy="36" r="1.2" fill="#10b981" />
+          {/* camera lens */}
+          <circle cx="60" cy="42" r="3" fill="#0a0a0a" stroke={beamColor} strokeWidth="0.8" />
+          <circle cx="60" cy="42" r="1.2" fill={beamColor} opacity="0.8" />
+        </svg>
+
+        {/* Spinning propellers */}
+        {[
+          { x: 22, y: 22 }, { x: 98, y: 22 }, { x: 22, y: 42 }, { x: 98, y: 42 },
+        ].map((p, i) => (
+          <motion.div
+            key={i}
+            className="absolute rounded-full"
+            style={{
+              left: p.x - 11, top: p.y - 11,
+              width: 22, height: 22,
+              background: `radial-gradient(circle, ${propColor} 0%, transparent 65%)`,
+              opacity: 0.55,
+            }}
+            animate={{ rotate: 360 }}
+            transition={{ duration: 0.06, repeat: Infinity, ease: 'linear' }}
+          >
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div style={{ width: 18, height: 1.5, background: propColor, borderRadius: 1 }} />
+              <div className="absolute" style={{ width: 1.5, height: 18, background: propColor, borderRadius: 1 }} />
+            </div>
+          </motion.div>
+        ))}
+
+        {/* Scanning pulse (data capture) */}
+        <motion.div
+          className="absolute left-1/2 top-[42px] -translate-x-1/2 rounded-full border"
+          style={{ borderColor: beamColor, width: 30, height: 30 }}
+          animate={{ scale: [1, 5, 1], opacity: [0.5, 0, 0.5] }}
+          transition={{ duration: 2.6, repeat: Infinity, ease: 'easeOut' }}
+        />
+
+        {/* Telemetry mini-pill */}
+        <motion.div
+          className="absolute -right-2 -top-2 px-1.5 py-0.5 rounded font-mono text-[7px] tracking-widest"
+          style={{ background: 'rgba(0,0,0,0.65)', color: beamColor, border: `1px solid ${beamColor}55` }}
+          animate={{ opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 2.2, repeat: Infinity }}
+        >
+          REC
+        </motion.div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// Data packets streaming down from drone scan
+function DataStream({ period }) {
+  const color = period === 'night' || period === 'twilight' ? '#a78bfa' : period === 'sunset' || period === 'dawn' ? '#fbbf24' : '#60a5fa'
+  const items = useMemo(() => Array.from({ length: 14 }).map((_, i) => ({
+    id: i,
+    left: 5 + Math.random() * 90,
+    delay: Math.random() * 4,
+    dur: 3 + Math.random() * 3,
+    char: ['1','0','{}','[]','01','π','◆'][Math.floor(Math.random() * 7)],
+  })), [])
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {items.map(it => (
+        <motion.span
+          key={it.id}
+          className="absolute font-mono text-[10px]"
+          style={{ left: `${it.left}%`, top: '40%', color, textShadow: `0 0 6px ${color}88` }}
+          initial={{ opacity: 0, y: 0 }}
+          animate={{ opacity: [0, 0.7, 0], y: [0, 220] }}
+          transition={{ duration: it.dur, delay: it.delay, repeat: Infinity, ease: 'easeIn' }}
+        >
+          {it.char}
+        </motion.span>
+      ))}
+    </div>
+  )
+}
+
 export default function TimeBackdrop() {
   const { hour, period } = useTimeOfDay(60000)
   const palette = PALETTES[period]
@@ -257,6 +396,10 @@ export default function TimeBackdrop() {
 
       {/* mountain silhouettes at horizon */}
       <MountainSilhouette period={period} />
+
+      {/* Drone hovering across the sky */}
+      <Drone period={period} />
+      <DataStream period={period} />
 
       {/* readability vignette */}
       <div className="absolute inset-0 pointer-events-none" style={{

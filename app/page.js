@@ -196,6 +196,11 @@ function Login({ onLogin }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  const [setup, setSetup] = useState(null)
+
+  useEffect(() => {
+    fetch('/api/health').then(r => r.json()).then(setSetup).catch(() => {})
+  }, [])
 
   async function submit(e) {
     e.preventDefault()
@@ -210,6 +215,10 @@ function Login({ onLogin }) {
 
   function quick(u, p) { setUsername(u); setPassword(p) }
 
+  const showSetup = setup && setup.tables_ready === false
+  const projectRef = setup?.supabase_url ? setup.supabase_url.match(/https?:\/\/([^.]+)/)?.[1] : null
+  const sqlEditorUrl = projectRef ? `https://supabase.com/dashboard/project/${projectRef}/sql/new` : 'https://supabase.com/dashboard'
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative">
       <Backdrop />
@@ -221,8 +230,29 @@ function Login({ onLogin }) {
             </div>
             <div className="text-3xl font-bold tracking-tight">Altiflow</div>
           </motion.div>
-          <div className="text-sm text-zinc-500">Industrial Photogrammetry Operations</div>
+          <div className="text-sm text-zinc-400">Industrial Photogrammetry Operations</div>
         </div>
+
+        {showSetup && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+            className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 backdrop-blur-md">
+            <div className="flex items-center gap-2 text-amber-300 font-medium mb-2">
+              <AlertTriangle size={16} /> One-time Supabase setup required
+            </div>
+            <div className="text-xs text-zinc-300 mb-3">
+              Your database tables haven't been created yet. Open the SQL Editor and paste the schema (one click).
+            </div>
+            <ol className="text-xs text-zinc-300 list-decimal list-inside space-y-1 mb-3">
+              <li>Open <a href={sqlEditorUrl} target="_blank" rel="noopener" className="text-amber-300 underline">Supabase SQL Editor →</a></li>
+              <li>Copy the contents of <code className="px-1 py-0.5 bg-zinc-800 rounded text-amber-200">supabase/schema.sql</code></li>
+              <li>Paste → Run. Refresh this page.</li>
+            </ol>
+            <a href={sqlEditorUrl} target="_blank" rel="noopener"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500 text-zinc-900 text-xs font-medium hover:bg-amber-400 transition">
+              Open SQL Editor <ArrowRight size={12} />
+            </a>
+          </motion.div>
+        )}
 
         <GlassCard className="p-8">
           <form onSubmit={submit} className="space-y-4">
