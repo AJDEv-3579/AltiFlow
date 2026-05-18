@@ -156,7 +156,7 @@ async function nextReflyAssignee(db) {
     { $inc: { value: 1 } },
     { returnDocument: 'before', upsert: true }
   )
-  const idx = (state?.value?.value ?? 0) % order.length
+  const idx = (state?.value ?? 0) % order.length
   const username = order[idx]
   const user = await db.collection('users').findOne({ username })
   return user

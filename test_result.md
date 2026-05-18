@@ -146,9 +146,9 @@ backend:
         comment: "✅ ALL SLA TESTS PASSED: Created TestSLA client and user. (1) 1st upload -> 24h SLA. (2) 2nd upload -> 24h SLA. (3) 3rd upload -> 48h SLA. (4) 5th upload -> 72h SLA. (5) upload_timestamp is server-locked (cannot be overridden by client payload, verified timestamp is within last minute)."
   - task: "Refly automation: detect (img-csv)>10 && !base_rover, set Failed_Refly + round-robin assign"
     implemented: true
-    working: false
+    working: true
     file: "app/api/[[...path]]/route.js"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
@@ -158,6 +158,9 @@ backend:
       - working: false
         agent: "testing"
         comment: "⚠️ REFLY AUTO-FLAG WORKS BUT ROUND-ROBIN BROKEN: (1) Projects with (img-csv)>10 && !base_rover correctly auto-flagged as Failed_Refly with assignment. (2) Edge cases work: base_rover=true prevents refly, diff<=10 prevents refly. (3) ❌ ROUND-ROBIN BUG: All 4 successive refly projects assigned to Rohit only, no rotation to Shalini/Advik. ROOT CAUSE: Line 159 in route.js uses `state?.value?.value` but system_state document has flat structure {key:'refly_rr_index', value:5}, so state?.value?.value is undefined, defaults to 0, always returns idx=0 (Rohit). FIX: Change line 159 from `const idx = (state?.value?.value ?? 0) % order.length` to `const idx = (state?.value ?? 0) % order.length`."
+      - working: true
+        agent: "testing"
+        comment: "✅ ROUND-ROBIN FIX VERIFIED: Line 159 now correctly reads `const idx = (state?.value ?? 0) % order.length`. Tested with 4 successive refly projects (img=200, csv=180, base_rover=false). Results: Project 1→Rohit, Project 2→Shalini, Project 3→Advik, Project 4→Rohit (wrap-around). All 3 team members rotated correctly through the sequence. Round-robin assignment is now working as expected."
   - task: "Refly resolution: locked card until issue note + corrective photo uploaded"
     implemented: true
     working: true
@@ -281,3 +284,18 @@ agent_communication:
       
       FIX: Change line 159 to: `const idx = (state?.value ?? 0) % order.length`
       (Remove one level of .value nesting)
+  - agent: "testing"
+    message: |
+      ✅ ROUND-ROBIN BUG FIX VERIFIED - All tests passing!
+      
+      Re-tested the round-robin assignment after fix was applied to line 159.
+      Test results with 4 successive refly projects (img=200, csv=180, base_rover=false):
+      
+      ✅ Project 1 → Rohit
+      ✅ Project 2 → Shalini
+      ✅ Project 3 → Advik
+      ✅ Project 4 → Rohit (wrap-around confirmed)
+      
+      The fix `const idx = (state?.value ?? 0) % order.length` is working correctly.
+      All 3 team members are now rotating in sequence as expected.
+      Round-robin assignment is fully functional.
