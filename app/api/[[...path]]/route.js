@@ -137,8 +137,8 @@ async function audit(projectId, user, desc) {
 // =====================================================================
 export async function OPTIONS() { return corsify(new NextResponse(null, { status: 200 })) }
 
-async function handleRoute(request, { params }) {
-  const { path = [] } = params
+async function handleRoute(request, context) {
+  const { path = [] } = await context.params
   const route = `/${path.join('/')}`
   const method = request.method
   try {
@@ -151,12 +151,13 @@ async function handleRoute(request, { params }) {
     if (route === '/health' && method === 'GET') {
       const { error: probeErr } = await sb.from('users').select('id').limit(1)
       return json({
-        ok: true,
+        ok: !probeErr,
         backend: 'supabase',
         tables_ready: !probeErr,
         seed_done: seedDone,
         setup_error: seedError,
-        supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL || null,
+        probe_error: probeErr ? probeErr.message : null,
+        supabase_url: (process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/+$/, '') || null,
       })
     }
 

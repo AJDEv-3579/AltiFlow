@@ -3,10 +3,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  experimental: {
-    // Remove if not using Server Components
-    serverComponentsExternalPackages: ['mongodb'],
-  },
+  serverExternalPackages: ['mongodb'],
   webpack(config, { dev }) {
     if (dev) {
       // Reduce CPU/memory from file watching
