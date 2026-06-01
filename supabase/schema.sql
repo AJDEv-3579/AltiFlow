@@ -263,6 +263,56 @@ CREATE INDEX IF NOT EXISTS job_comments_created_at_idx ON public.job_comments (c
 
 ALTER TABLE public.job_comments ENABLE ROW LEVEL SECURITY;
 
+-- =====================================================================
+-- 14) RECYCLE_BIN — Super-Admin restore center for deleted records
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public.recycle_bin (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_type          TEXT NOT NULL,
+  table_name           TEXT NOT NULL,
+  entity_id            UUID NOT NULL,
+  payload              JSONB NOT NULL,
+  deleted_by           UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  deleted_by_username  TEXT,
+  deleted_at           TIMESTAMPTZ DEFAULT now(),
+  restored_by          UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  restored_by_username TEXT,
+  restored_at          TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS recycle_bin_deleted_at_idx ON public.recycle_bin (deleted_at DESC);
+CREATE INDEX IF NOT EXISTS recycle_bin_entity_idx ON public.recycle_bin (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS recycle_bin_restored_idx ON public.recycle_bin (restored_at);
+
+ALTER TABLE public.recycle_bin ENABLE ROW LEVEL SECURITY;
+
+-- =====================================================================
+-- 15) ENTITY_DELETE_REQUESTS — Role-based delete approval workflow
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public.entity_delete_requests (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_type           TEXT NOT NULL CHECK (entity_type IN ('job', 'client_project', 'project')),
+  entity_id             UUID NOT NULL,
+  table_name            TEXT NOT NULL,
+  client_id             UUID REFERENCES public.clients(id) ON DELETE SET NULL,
+  requested_by          UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  requested_by_username TEXT,
+  requested_by_role     TEXT NOT NULL,
+  target_role           TEXT NOT NULL CHECK (target_role IN ('Client-Admin', 'Super-Admin')),
+  reason                TEXT,
+  status                TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  reviewed_by           UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  reviewed_by_username  TEXT,
+  reviewed_at           TIMESTAMPTZ,
+  created_at            TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS entity_delete_requests_status_idx ON public.entity_delete_requests (status, target_role);
+CREATE INDEX IF NOT EXISTS entity_delete_requests_entity_idx ON public.entity_delete_requests (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS entity_delete_requests_client_idx ON public.entity_delete_requests (client_id, status);
+
+ALTER TABLE public.entity_delete_requests ENABLE ROW LEVEL SECURITY;
+
 -- Migration: run these if the table already exists (run each line separately)
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS sc_status    TEXT NOT NULL DEFAULT 'Pending' CHECK (sc_status  IN ('Pending', 'In Progress', 'Done', 'Blocked'));
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS uni_status   TEXT NOT NULL DEFAULT 'Pending' CHECK (uni_status IN ('Pending', 'In Progress', 'Done', 'Blocked'));

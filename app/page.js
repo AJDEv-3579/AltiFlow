@@ -17,9 +17,19 @@ import {
 } from 'lucide-react'
 
 // ============== API HELPER ==============
-function getToken() { return typeof window !== 'undefined' ? localStorage.getItem('altiflow_token') : null }
-function setToken(t) { localStorage.setItem('altiflow_token', t) }
-function clearToken() { localStorage.removeItem('altiflow_token') }
+function getToken() {
+  if (typeof window === 'undefined') return null
+  return sessionStorage.getItem('altiflow_token')
+}
+function setToken(t) {
+  sessionStorage.setItem('altiflow_token', t)
+  // Remove any older persistent token so browser re-open requires sign-in.
+  localStorage.removeItem('altiflow_token')
+}
+function clearToken() {
+  sessionStorage.removeItem('altiflow_token')
+  localStorage.removeItem('altiflow_token')
+}
 
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) }
@@ -88,10 +98,10 @@ function Field({ label, children, hint }) {
   )
 }
 
-function TextInput({ value, onChange, placeholder, type = 'text', big = false, ...rest }) {
+function TextInput({ value, onChange, placeholder, type = 'text', big = false, className = '', ...rest }) {
   return (
     <input type={type} value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-      className={`w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 ${big ? 'h-14 text-base fat-input' : 'h-11 text-sm'} text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 focus:ring-2 focus:ring-zinc-700/40 transition`}
+      className={`w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 ${big ? 'h-14 text-base fat-input' : 'h-11 text-sm'} text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 focus:ring-2 focus:ring-zinc-700/40 transition ${className}`}
       {...rest} />
   )
 }
@@ -520,6 +530,40 @@ function ProjectDrawer({ project, onClose, role, onChanged }) {
     } catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
 
+  async function deleteLegacyProject() {
+    if (role !== 'Super-Admin') return
+    if (!confirm('Delete this project card? It can be restored from Bin.')) return
+    setBusy(true)
+    try {
+      await api(`/projects/${project.id}`, { method: 'DELETE' })
+      toast.success('Project moved to Bin')
+      onChanged()
+      onClose()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function requestLegacyProjectDelete() {
+    if (role !== 'Admin') return
+    const reason = window.prompt('Reason for delete request (required):', '')
+    if (!reason || !reason.trim()) return
+    setBusy(true)
+    try {
+      await api('/entity-delete-requests', {
+        method: 'POST',
+        body: JSON.stringify({ entity_type: 'project', entity_id: project.id, reason: reason.trim() }),
+      })
+      toast.success('Delete request submitted to Super Admin')
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const locked = project.status === 'Failed_Refly' && !project.refly_resolved
 
   return (
@@ -533,7 +577,19 @@ function ProjectDrawer({ project, onClose, role, onChanged }) {
             <div className="text-xs text-zinc-500">{project.client_name}</div>
             <div className="font-semibold">{project.title}</div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-lg"><X size={18} /></button>
+          <div className="flex items-center gap-2">
+            {role === 'Super-Admin' && (
+              <button onClick={deleteLegacyProject} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg" title="Delete project card">
+                <Trash2 size={14} />
+              </button>
+            )}
+            {role === 'Admin' && (
+              <button onClick={requestLegacyProjectDelete} className="p-2 hover:bg-amber-500/10 text-amber-300 rounded-lg" title="Request project delete">
+                <FileWarning size={14} />
+              </button>
+            )}
+            <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-lg"><X size={18} /></button>
+          </div>
         </div>
 
         <div className="p-5 space-y-5">
@@ -759,6 +815,7 @@ function AdminApp({ user, onLogout }) {
   const [logs, setLogs] = useState([])
   const [analytics, setAnalytics] = useState(null)
   const [deletionRequests, setDeletionRequests] = useState([])
+  const [recycleItems, setRecycleItems] = useState([])
   const [active, setActive] = useState(null)
   const [activeClientProject, setActiveClientProject] = useState(null)
 
@@ -778,11 +835,19 @@ function AdminApp({ user, onLogout }) {
       if (isSuperAdmin && tab === 'deletions') {
         const dr = await api('/deletion-requests'); setDeletionRequests(dr.requests)
       }
+      if (isSuperAdmin && tab === 'bin') {
+        const rb = await api('/recycle-bin'); setRecycleItems(rb.items || [])
+      }
     } catch (e) { toast.error(e.message) }
   }
   useEffect(() => { refresh() }, [])
   useEffect(() => { if (tab === 'audit') api('/audit-logs').then(r => setLogs(r.logs)).catch(() => {}) }, [tab])
   useEffect(() => { if (isSuperAdmin && tab === 'deletions') api('/deletion-requests').then(r => setDeletionRequests(r.requests)).catch(() => {}) }, [tab])
+  useEffect(() => { if (isSuperAdmin && tab === 'bin') api('/recycle-bin').then(r => setRecycleItems(r.items || [])).catch(() => {}) }, [tab])
+  useEffect(() => {
+    if (!['assigned', 'pipeline'].includes(tab)) return
+    api('/jobs-assigned').then(r => setAssignedJobs(r.jobs || [])).catch(() => {})
+  }, [tab])
 
   async function moveCard(card, target) {
     try {
@@ -802,6 +867,8 @@ function AdminApp({ user, onLogout }) {
     { k: 'support', l: 'Support Tickets', i: Bell },
     { k: 'audit', l: 'Audit Logs', i: ClipboardList },
     ...(isSuperAdmin ? [{ k: 'deletions', l: 'Deletion Queue', i: Trash2 }] : []),
+    ...(isSuperAdmin ? [{ k: 'deleteRequests', l: 'Delete Requests', i: FileWarning }] : []),
+    ...(isSuperAdmin ? [{ k: 'bin', l: 'Bin', i: Folder }] : []),
   ]
 
   if (activeClientProject) {
@@ -844,13 +911,26 @@ function AdminApp({ user, onLogout }) {
           const next = clientProjects.find(p => p.id === projectId)
           if (next) setActiveClientProject(next)
         }} />}
-        {tab === 'pipeline' && <Kanban projects={projects} onMove={moveCard} onCardClick={setActive} role={user.role} />}
-        {tab === 'workspaces' && <InternalClientWorkspacesTab projects={clientProjects} onOpen={setActiveClientProject} />}
+        {tab === 'pipeline' && (
+          <div className="space-y-5">
+            <Kanban projects={projects} onMove={moveCard} onCardClick={setActive} role={user.role} />
+            <FieldJobPipelineTab
+              jobs={assignedJobs}
+              onOpenWorkspaceById={projectId => {
+                const next = clientProjects.find(p => p.id === projectId)
+                if (next) setActiveClientProject(next)
+              }}
+            />
+          </div>
+        )}
+        {tab === 'workspaces' && <InternalClientWorkspacesTab projects={clientProjects} onOpen={setActiveClientProject} user={user} onRefresh={refresh} />}
         {tab === 'clients' && <ClientsTab clients={clients} onRefresh={refresh} isSuperAdmin={isSuperAdmin} />}
         {tab === 'users' && <UsersTab users={users} clients={clients} onRefresh={refresh} isSuperAdmin={isSuperAdmin} />}
         {tab === 'support' && <SupportTicketsTab user={user} />}
         {tab === 'audit' && <AuditTab logs={logs} />}
         {tab === 'deletions' && isSuperAdmin && <DeletionQueueTab requests={deletionRequests} onRefresh={refresh} />}
+        {tab === 'deleteRequests' && isSuperAdmin && <EntityDeleteRequestsTab user={user} />}
+        {tab === 'bin' && isSuperAdmin && <RecycleBinTab items={recycleItems} onRefresh={refresh} />}
       </div>
 
       <AnimatePresence>{active && <ProjectDrawer project={active} onClose={() => setActive(null)} role={user.role} onChanged={refresh} />}</AnimatePresence>
@@ -858,7 +938,38 @@ function AdminApp({ user, onLogout }) {
   )
 }
 
-function InternalClientWorkspacesTab({ projects, onOpen }) {
+function InternalClientWorkspacesTab({ projects, onOpen, user, onRefresh }) {
+  const canDelete = user?.role === 'Super-Admin'
+  const canRequestDelete = user?.role === 'Admin'
+
+  async function deleteWorkspace(e, id) {
+    e.stopPropagation()
+    if (!confirm('Delete this workspace? It can be restored from Bin.')) return
+    try {
+      await api(`/client-projects/${id}`, { method: 'DELETE' })
+      toast.success('Workspace moved to Bin')
+      onRefresh?.()
+    } catch (err) {
+      toast.error(err.message)
+    }
+  }
+
+  async function requestWorkspaceDelete(e, p) {
+    e.stopPropagation()
+    const reason = window.prompt('Reason for delete request (required):', '')
+    if (!reason || !reason.trim()) return
+    try {
+      await api('/entity-delete-requests', {
+        method: 'POST',
+        body: JSON.stringify({ entity_type: 'client_project', entity_id: p.id, reason: reason.trim() }),
+      })
+      toast.success('Delete request submitted')
+      onRefresh?.()
+    } catch (err) {
+      toast.error(err.message)
+    }
+  }
+
   if (!projects?.length) {
     return (
       <GlassCard className="p-8 text-center">
@@ -883,7 +994,19 @@ function InternalClientWorkspacesTab({ projects, onOpen }) {
                   {p.client_name || 'Unknown Client'} · {p.type} · {p.head}
                 </div>
               </div>
-              <ChevronRight size={16} className="text-zinc-600" />
+              <div className="flex items-center gap-2">
+                {canDelete && (
+                  <button onClick={e => deleteWorkspace(e, p.id)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg" title="Delete workspace">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+                {canRequestDelete && (
+                  <button onClick={e => requestWorkspaceDelete(e, p)} className="p-2 hover:bg-amber-500/10 text-amber-300 rounded-lg" title="Request workspace delete">
+                    <FileWarning size={14} />
+                  </button>
+                )}
+                <ChevronRight size={16} className="text-zinc-600" />
+              </div>
             </div>
           </GlassCard>
         </button>
@@ -919,6 +1042,48 @@ function AssignedJobsTab({ jobs, onOpenWorkspaceById }) {
           </div>
         </GlassCard>
       ))}
+    </div>
+  )
+}
+
+function getJobPipelineStage(job) {
+  return (job.category === 'Uniformity' ? job.uni_status : job.sc_status) || 'Pending'
+}
+
+function FieldJobPipelineTab({ jobs, onOpenWorkspaceById }) {
+  const stages = ['Pending', 'In Progress', 'Done', 'Blocked']
+  const grouped = Object.fromEntries(stages.map(s => [s, []]))
+  for (const j of (jobs || [])) {
+    const s = getJobPipelineStage(j)
+    if (!grouped[s]) grouped[s] = []
+    grouped[s].push(j)
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="text-xs uppercase tracking-wider text-zinc-500">Field Job Pipeline (Assigned)</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        {stages.map(stage => (
+          <GlassCard key={stage} className="p-3 border border-zinc-800/70">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs uppercase tracking-wider text-zinc-400">{stage}</div>
+              <div className="text-[11px] font-mono text-zinc-500">{(grouped[stage] || []).length}</div>
+            </div>
+            <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
+              {(grouped[stage] || []).length === 0 && <div className="text-[11px] text-zinc-600">No cards</div>}
+              {(grouped[stage] || []).map(j => (
+                <div key={j.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/40 p-2.5">
+                  <div className="text-sm font-medium text-zinc-100 truncate">{j.title}</div>
+                  <div className="text-[11px] text-zinc-500 mt-1 truncate">{j.client_name || 'Unknown'} · {j.project_name || 'Unknown'}</div>
+                  <div className="mt-2">
+                    <Btn size="sm" variant="ghost" onClick={() => onOpenWorkspaceById?.(j.project_id)} icon={ChevronRight}>Open</Btn>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </GlassCard>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1074,8 +1239,8 @@ function ClientsTab({ clients, onRefresh, isSuperAdmin }) {
     catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
   async function del(id) {
-    if (!confirm('Delete this client?')) return
-    try { await api(`/clients/${id}`, { method: 'DELETE' }); toast.success('Deleted'); onRefresh() } catch (e) { toast.error(e.message) }
+    if (!confirm('Delete this client? It can be restored from Bin.')) return
+    try { await api(`/clients/${id}`, { method: 'DELETE' }); toast.success('Moved to Bin'); onRefresh() } catch (e) { toast.error(e.message) }
   }
   return (
     <div className="space-y-4">
@@ -1121,8 +1286,8 @@ function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
     } catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
   async function del(id, username) {
-    if (!confirm(`Delete user ${username}?`)) return
-    try { await api(`/users/${id}`, { method: 'DELETE' }); toast.success('Deleted'); onRefresh() } catch (e) { toast.error(e.message) }
+    if (!confirm(`Delete user ${username}? It can be restored from Bin.`)) return
+    try { await api(`/users/${id}`, { method: 'DELETE' }); toast.success('Moved to Bin'); onRefresh() } catch (e) { toast.error(e.message) }
   }
   return (
     <div className="space-y-4">
@@ -1220,6 +1385,119 @@ function DeletionQueueTab({ requests, onRefresh }) {
               <Btn variant="danger" size="sm" disabled={busy === r.id} onClick={() => resolve(r.id, 'approve')}>Approve</Btn>
               <Btn variant="ghost" size="sm" disabled={busy === r.id} onClick={() => resolve(r.id, 'reject')}>Reject</Btn>
             </div>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  )
+}
+
+function RecycleBinTab({ items, onRefresh }) {
+  const [restoring, setRestoring] = useState(null)
+
+  async function restoreItem(id) {
+    setRestoring(id)
+    try {
+      await api(`/recycle-bin/${id}/restore`, { method: 'POST' })
+      toast.success('Item restored')
+      onRefresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setRestoring(null)
+    }
+  }
+
+  return (
+    <GlassCard className="p-5">
+      <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Recycle Bin</div>
+      {items.length === 0 && <div className="text-sm text-zinc-600">Bin is empty.</div>}
+      <div className="space-y-3">
+        {items.map(item => {
+          const payload = item.payload || {}
+          const label = payload.name || payload.title || payload.username || payload.id || item.entity_id
+          const restored = !!item.restored_at
+          return (
+            <div key={item.id} className="flex items-center justify-between p-3 rounded-lg border border-zinc-800/60 bg-zinc-900/40 gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-zinc-100 truncate">{label}</div>
+                <div className="text-[11px] text-zinc-500 mt-0.5">
+                  {item.entity_type} · deleted by {item.deleted_by_username || 'system'} · {new Date(item.deleted_at).toLocaleString()}
+                </div>
+                {restored && (
+                  <div className="text-[11px] text-emerald-300 mt-1">
+                    Restored by {item.restored_by_username || 'system'} · {new Date(item.restored_at).toLocaleString()}
+                  </div>
+                )}
+              </div>
+              <Btn
+                variant="ghost"
+                size="sm"
+                disabled={restored || restoring === item.id}
+                onClick={() => restoreItem(item.id)}
+              >
+                {restored ? 'Restored' : restoring === item.id ? 'Restoring...' : 'Restore'}
+              </Btn>
+            </div>
+          )
+        })}
+      </div>
+    </GlassCard>
+  )
+}
+
+function EntityDeleteRequestsTab({ user }) {
+  const canReview = ['Super-Admin', 'Client-Admin'].includes(user.role)
+  const [requests, setRequests] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(null)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const r = await api('/entity-delete-requests')
+      setRequests(r.requests || [])
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function resolve(id, action) {
+    setBusy(id)
+    try {
+      await api(`/entity-delete-requests/${id}`, { method: 'PATCH', body: JSON.stringify({ action }) })
+      toast.success(action === 'approve' ? 'Delete request approved' : 'Delete request rejected')
+      load()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <GlassCard className="p-5">
+      <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Delete Requests</div>
+      {loading && <div className="text-sm text-zinc-500">Loading requests...</div>}
+      {!loading && requests.length === 0 && <div className="text-sm text-zinc-600">No pending requests.</div>}
+      <div className="space-y-3">
+        {requests.map(r => (
+          <div key={r.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/40 p-3 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm text-zinc-100 truncate">{r.entity_type} · {r.entity_id?.slice(0, 8)}</div>
+              <div className="text-[11px] text-zinc-500 mt-0.5">Requested by {r.requested_by_username} ({r.requested_by_role}) · {new Date(r.created_at).toLocaleString()}</div>
+              {r.reason && <div className="text-xs text-zinc-400 mt-1">Reason: {r.reason}</div>}
+            </div>
+            {canReview && (
+              <div className="flex items-center gap-2 shrink-0">
+                <Btn size="sm" variant="danger" disabled={busy === r.id} onClick={() => resolve(r.id, 'approve')}>Approve</Btn>
+                <Btn size="sm" variant="ghost" disabled={busy === r.id} onClick={() => resolve(r.id, 'reject')}>Reject</Btn>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -1378,9 +1656,117 @@ function CreateProjectModal({ user, onDone, onCancel }) {
   )
 }
 
+function EditProjectInfoModal({ project, onDone, onCancel }) {
+  const [form, setForm] = useState({
+    name: project?.name || '',
+    type: project?.type || '',
+    start_date: project?.start_date || '',
+    end_date: project?.end_date || '',
+    head: project?.head || '',
+  })
+  const [busy, setBusy] = useState(false)
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!form.type || !form.start_date || !form.head) {
+      toast.error('Project category and project admin are required')
+      return
+    }
+    setBusy(true)
+    try {
+      const r = await api(`/client-projects/${project.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: form.name.trim(),
+          type: form.type,
+          start_date: form.start_date,
+          end_date: form.end_date || null,
+          head: form.head.trim(),
+        }),
+      })
+      toast.success('Project info updated')
+      onDone?.(r.project)
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center" onClick={onCancel}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <motion.div
+        initial={{ y: '100%', opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: '100%', opacity: 0 }}
+        transition={{ type: 'spring', damping: 28 }}
+        onClick={e => e.stopPropagation()}
+        className="relative w-full max-w-lg glass-strong rounded-t-3xl md:rounded-2xl border border-zinc-800/80 overflow-y-auto max-h-[90vh]"
+      >
+        <div className="px-6 py-5 border-b border-zinc-800/60 flex items-center justify-between">
+          <div>
+            <div className="font-semibold text-lg">Edit Project Info</div>
+            <div className="text-xs text-zinc-500 mt-0.5">Update workspace details</div>
+          </div>
+          <button onClick={onCancel} className="p-2 hover:bg-zinc-800 rounded-lg"><X size={18} /></button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-4">
+          <Field label="Project Name (optional)">
+            <TextInput value={form.name} onChange={v => set('name', v)} placeholder="e.g., North Region Survey Q3" />
+          </Field>
+          <Field label="Project Category *">
+            <select value={form.type} onChange={e => set('type', e.target.value)}
+              className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600">
+              <option value="">Select category…</option>
+              <option value="Aerial Mapping">Aerial Mapping</option>
+              <option value="Photogrammetry">Photogrammetry</option>
+              <option value="LiDAR Survey">LiDAR Survey</option>
+              <option value="Inspection">Inspection</option>
+              <option value="3D Modelling">3D Modelling</option>
+              <option value="Other">Other</option>
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Start Date *">
+              <TextInput type="date" value={form.start_date} onChange={v => set('start_date', v)} />
+            </Field>
+            <Field label="End Date (optional)">
+              <TextInput type="date" value={form.end_date} onChange={v => set('end_date', v)} />
+            </Field>
+          </div>
+          <Field label="Project Admin *">
+            <TextInput value={form.head} onChange={v => set('head', v)} placeholder="Project admin name" />
+          </Field>
+          <div className="flex gap-3 pt-2">
+            <Btn type="button" variant="ghost" onClick={onCancel} className="flex-1">Cancel</Btn>
+            <Btn type="submit" disabled={busy || !form.type || !form.start_date || !form.head}
+              className="flex-1" icon={Settings}>
+              {busy ? 'Saving…' : 'Save Changes'}
+            </Btn>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  )
+}
+
 // ============== PROJECTS LIST PAGE ==============
 function ProjectsListPage({ user, projects, isAdmin, onNavigate, onRefresh, onLogout }) {
   const [showCreate, setShowCreate] = useState(false)
+
+  async function deleteProject(e, id) {
+    e.stopPropagation()
+    if (!confirm('Delete this workspace? It can be restored from Bin.')) return
+    try {
+      await api(`/client-projects/${id}`, { method: 'DELETE' })
+      toast.success('Workspace moved to Bin')
+      onRefresh?.()
+    } catch (err) {
+      toast.error(err.message)
+    }
+  }
+
   return (
     <div className="min-h-screen relative">
       <Backdrop />
@@ -1437,7 +1823,14 @@ function ProjectsListPage({ user, projects, isAdmin, onNavigate, onRefresh, onLo
                         </div>
                       </div>
                     </div>
-                    <ChevronRight size={18} className="text-zinc-600 group-hover:text-zinc-300 transition-colors shrink-0" />
+                    <div className="flex items-center gap-2 shrink-0">
+                      {isAdmin && (
+                        <button onClick={e => deleteProject(e, p.id)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg" title="Delete workspace">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                      <ChevronRight size={18} className="text-zinc-600 group-hover:text-zinc-300 transition-colors" />
+                    </div>
                   </div>
                 </GlassCard>
               </motion.div>
@@ -1669,6 +2062,7 @@ function ProjectDashboardTab({ project, jobs, teamMembers = [] }) {
 function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual = false }) {
   const BLANK_FLIGHT = () => ({ image_count: null, csv_rows: null })
   const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
+  const [submitted, setSubmitted] = useState(false)
   const [form, setForm] = useState({
     title: '', capture_date: '', drone_name: '', category: 'Stand Count',
     flight_count: 1, flights: [BLANK_FLIGHT()],
@@ -1711,7 +2105,12 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
 
   async function submit(e) {
     e.preventDefault()
-    if (!form.title.trim() || !form.capture_date || !form.drone_name.trim()) return
+    setSubmitted(true)
+    const hasMissingFlight = form.flights.some(f => f.image_count === null || f.csv_rows === null)
+    if (!form.title.trim() || !form.capture_date || !form.drone_name.trim() || !form.comments.trim() || hasMissingFlight) {
+      toast.error('Please complete all required fields')
+      return
+    }
     setBusy(true)
     try {
       await api(`/client-projects/${project.id}/jobs`, {
@@ -1733,24 +2132,31 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
     } catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
 
-  const valid = form.title.trim() && form.capture_date && form.drone_name.trim()
+  const missing = {
+    title: submitted && !form.title.trim(),
+    capture: submitted && !form.capture_date,
+    drone: submitted && !form.drone_name.trim(),
+    comments: submitted && !form.comments.trim(),
+  }
+  const valid = form.title.trim() && form.capture_date && form.drone_name.trim() && form.comments.trim() && !form.flights.some(f => f.image_count === null || f.csv_rows === null)
+  const fieldErrorCls = hasError => hasError ? 'border-red-500/70 focus:border-red-400' : ''
 
   return (
-    <GlassCard className="p-5">
-      <div className="flex items-center justify-between mb-5">
+    <GlassCard className="p-4 rounded-2xl border border-zinc-800/70">
+      <div className="flex items-center justify-between mb-4">
         <div className="text-sm font-semibold text-zinc-200">New Field Job Card</div>
         <button onClick={onCancel} className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-500"><X size={14} /></button>
       </div>
-      <form onSubmit={submit} className="space-y-4">
+      <form onSubmit={submit} className="space-y-3">
         {/* Row 1: Field Name + Capture Date + Category */}
         <div className="grid grid-cols-3 gap-3">
           <Field label="Field Name *">
-            <TextInput value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g., Block A North" />
+            <TextInput className={fieldErrorCls(missing.title)} value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g., Block A North" />
           </Field>
           <Field label="Date of Capture *">
             <input type="date" value={form.capture_date}
               onChange={e => setForm(f => ({ ...f, capture_date: e.target.value }))}
-              className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 [color-scheme:dark]" />
+              className={`w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 [color-scheme:dark] ${fieldErrorCls(missing.capture)}`} />
           </Field>
           <Field label="Category *">
             <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
@@ -1764,7 +2170,7 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
         {/* Row 2: Drone Name + Flight Count */}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Drone Name *">
-            <TextInput value={form.drone_name} onChange={v => setForm(f => ({ ...f, drone_name: v }))} placeholder="e.g., DJI Mavic 3" />
+            <TextInput className={fieldErrorCls(missing.drone)} value={form.drone_name} onChange={v => setForm(f => ({ ...f, drone_name: v }))} placeholder="e.g., DJI Mavic 3" />
           </Field>
           <Field label="No. of Flights">
             <div className="flex items-center gap-2 h-11">
@@ -1782,8 +2188,10 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
         {/* Per-flight data */}
         <div className="space-y-2">
           <div className="text-[10px] uppercase tracking-wider text-zinc-500">Flight Data</div>
-          {form.flights.map((flight, i) => (
-            <div key={i} className="rounded-xl bg-zinc-900/40 border border-zinc-800/60 p-4 space-y-2.5">
+          {form.flights.map((flight, i) => {
+            const missingFlight = submitted && (flight.image_count === null || flight.csv_rows === null)
+            return (
+            <div key={i} className={`rounded-xl bg-zinc-900/40 border p-3 space-y-2 ${missingFlight ? 'border-red-500/50' : 'border-zinc-800/60'}`}>
               <div className="text-xs font-semibold text-zinc-400">Flight {i + 1}</div>
               {/* Image folder */}
               <div className="flex items-center gap-2">
@@ -1816,8 +2224,9 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
                   {flight.csv_rows !== null ? `${flight.csv_rows.toLocaleString()} rows` : '—'}
                 </div>
               </div>
+              {missingFlight && <div className="text-[11px] text-red-300">Image folder and CSV are required for this flight.</div>}
             </div>
-          ))}
+          )})}
         </div>
 
         {/* Logs checkbox */}
@@ -1831,11 +2240,12 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
         </label>
 
         {/* Comments */}
-        <Field label="Comments">
+        <Field label="Comments *">
           <textarea value={form.comments} onChange={e => setForm(f => ({ ...f, comments: e.target.value }))} rows={2}
             placeholder="Any notes about this field capture…"
-            className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none" />
+            className={`w-full bg-zinc-900/60 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none ${fieldErrorCls(missing.comments)}`} />
         </Field>
+        {submitted && !valid && <div className="text-xs text-red-300">Please fill all required fields before submitting.</div>}
 
         {/* Manual assignment for admins only. Client-created jobs are auto-assigned server-side. */}
         {canAssignManual && adminAssignees.length > 0 && (
@@ -1939,6 +2349,10 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
   const [expanded, setExpanded] = useState(null)
   const [commentDrafts, setCommentDrafts] = useState({})
   const [commentBusy, setCommentBusy] = useState(null)
+  const [search, setSearch] = useState('')
+  const [ownerFilter, setOwnerFilter] = useState('all')
+  const [assigneeFilter, setAssigneeFilter] = useState('all')
+  const [stageFilter, setStageFilter] = useState('all')
   const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
 
   async function updateStage(jobId, field, value) {
@@ -1950,12 +2364,26 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
   }
 
   async function deleteJob(jobId) {
-    if (!confirm('Delete this field job card?')) return
+    if (!confirm('Delete this field job card? It can be restored from Bin.')) return
     try {
       await api(`/client-projects/${project.id}/jobs/${jobId}`, { method: 'DELETE' })
-      toast.success('Deleted')
+      toast.success('Moved to Bin')
       onRefresh()
     } catch (e) { toast.error(e.message) }
+  }
+
+  async function requestDeleteJob(job) {
+    const reason = window.prompt('Reason for delete request (required):', '')
+    if (!reason || !reason.trim()) return
+    try {
+      await api('/entity-delete-requests', {
+        method: 'POST',
+        body: JSON.stringify({ entity_type: 'job', entity_id: job.id, reason: reason.trim() }),
+      })
+      toast.success('Delete request submitted')
+    } catch (e) {
+      toast.error(e.message)
+    }
   }
 
   async function addPipelineComment(jobId) {
@@ -1983,12 +2411,70 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
       s === 'Blocked'     ? 'bg-red-500/10     text-red-300     border-red-500/30'     :
       'bg-zinc-800/60 text-zinc-500 border-zinc-700'}`
 
+  const ownerOptions = useMemo(() => {
+    const vals = [...new Set((jobs || []).map(j => j.created_by_name).filter(Boolean))]
+    return vals.sort((a, b) => a.localeCompare(b))
+  }, [jobs])
+
+  const assigneeOptions = useMemo(() => {
+    const vals = [...new Set((jobs || []).map(j => j.assigned_to_name).filter(Boolean))]
+    return vals.sort((a, b) => a.localeCompare(b))
+  }, [jobs])
+
+  function activeStage(job) {
+    return (job.category === 'Uniformity' ? job.uni_status : job.sc_status) || 'Pending'
+  }
+
+  const filteredJobs = (jobs || []).filter(job => {
+    const text = `${job.title || ''} ${job.drone_name || ''} ${job.created_by_name || ''} ${job.assigned_to_name || ''}`.toLowerCase()
+    const q = search.trim().toLowerCase()
+    if (q && !text.includes(q)) return false
+    if (ownerFilter !== 'all' && (job.created_by_name || '') !== ownerFilter) return false
+    if (assigneeFilter !== 'all') {
+      const currentAssignee = job.assigned_to_name || 'Unassigned'
+      if (currentAssignee !== assigneeFilter) return false
+    }
+    if (stageFilter !== 'all' && activeStage(job) !== stageFilter) return false
+    return true
+  })
+
+  const canDelete = ['Client-Admin', 'Super-Admin'].includes(user.role)
+  const canRequestDelete = ['Admin', 'Client-User'].includes(user.role)
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-zinc-400">{jobs.length} field{jobs.length !== 1 ? 's' : ''} submitted</div>
+        <div className="text-sm text-zinc-400">{filteredJobs.length} of {jobs.length} field{jobs.length !== 1 ? 's' : ''}</div>
         {!showAdd && <Btn onClick={() => setShowAdd(true)} icon={Plus} variant="primary">Add Field</Btn>}
       </div>
+
+      <GlassCard className="p-4">
+        <div className="grid md:grid-cols-4 gap-2">
+          <div className="md:col-span-2">
+            <TextInput value={search} onChange={setSearch} placeholder="Search field name, owner, assignee, drone..." />
+          </div>
+          <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600">
+            <option value="all">All Owners</option>
+            {ownerOptions.map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600">
+            <option value="all">All Assignees</option>
+            <option value="Unassigned">Unassigned</option>
+            {assigneeOptions.map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </div>
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
+          {['all', 'Pending', 'In Progress', 'Done', 'Blocked'].map(s => (
+            <button
+              key={s}
+              onClick={() => setStageFilter(s)}
+              className={`px-2.5 h-7 text-[11px] rounded-lg border ${stageFilter === s ? 'bg-zinc-100 text-zinc-900 border-zinc-100' : 'bg-zinc-900/50 text-zinc-400 border-zinc-800 hover:border-zinc-700'}`}
+            >
+              {s === 'all' ? 'All Stages' : s}
+            </button>
+          ))}
+        </div>
+      </GlassCard>
 
       <AnimatePresence>
         {showAdd && (
@@ -2004,7 +2490,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
         )}
       </AnimatePresence>
 
-      {jobs.length === 0 && !showAdd && (
+      {filteredJobs.length === 0 && !showAdd && (
         <div className="text-center py-16">
           <div className="w-12 h-12 mx-auto rounded-xl bg-zinc-900/60 border border-zinc-800 flex items-center justify-center mb-3">
             <ClipboardList size={20} className="text-zinc-600" />
@@ -2013,19 +2499,19 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
         </div>
       )}
 
-      <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         <AnimatePresence>
-          {jobs.map(job => {
+          {filteredJobs.map(job => {
             const isOpen = expanded === job.id
             const flights = Array.isArray(job.flights) ? job.flights : []
             const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
             const totalCSV    = flights.reduce((s, f) => s + (f.csv_rows    || 0), 0)
             return (
-              <motion.div key={job.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
-                <GlassCard className="overflow-hidden">
+              <motion.div key={job.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="min-h-[320px]">
+                <GlassCard className="overflow-hidden h-full flex flex-col">
                   {/* Card header — click to expand */}
                   <button type="button" onClick={() => setExpanded(isOpen ? null : job.id)}
-                    className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors">
+                    className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors grow">
                     <div className="flex items-start justify-between gap-3">
                       {/* Left: field info */}
                       <div className="flex-1 min-w-0">
@@ -2083,7 +2569,6 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                           const stValue = (isUni ? job.uni_status : job.sc_status) || 'Pending'
                           return (
                             <>
-                              <span className="text-[10px] text-zinc-600">{isUni ? 'Uni' : 'SC'}</span>
                               <select value={stValue}
                                 onClick={e => e.stopPropagation()}
                                 onChange={e => { e.stopPropagation(); updateStage(job.id, stField, e.target.value) }}
@@ -2094,7 +2579,6 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                             </>
                           )
                         })()}
-                        <ChevronDown size={14} className={`text-zinc-600 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                       </div>
                     </div>
                   </button>
@@ -2199,10 +2683,16 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                                 </div>
                               )}
                             </div>
-                            {isAdmin && (
+                            {canDelete && (
                               <button onClick={() => deleteJob(job.id)}
                                 className="flex items-center gap-1.5 text-red-400 hover:text-red-300 transition-colors">
                                 <Trash2 size={12} /> Delete
+                              </button>
+                            )}
+                            {canRequestDelete && (
+                              <button onClick={() => requestDeleteJob(job)}
+                                className="flex items-center gap-1.5 text-amber-300 hover:text-amber-200 transition-colors">
+                                <FileWarning size={12} /> Request Delete
                               </button>
                             )}
                           </div>
@@ -2226,6 +2716,7 @@ const STAGE_STYLES = {
   'In Progress': { bg: 'bg-blue-500/10',      text: 'text-blue-300',    border: 'border-blue-500/30' },
   'Done':        { bg: 'bg-emerald-500/10',   text: 'text-emerald-300', border: 'border-emerald-500/30' },
   'Blocked':     { bg: 'bg-red-500/10',       text: 'text-red-300',     border: 'border-red-500/40' },
+  'Yet to Upload': { bg: 'bg-amber-500/10',   text: 'text-amber-300',   border: 'border-amber-500/30' },
 }
 
 function StageChip({ status }) {
@@ -2235,143 +2726,244 @@ function StageChip({ status }) {
       {status === 'Done' && <CheckCircle2 size={10} className="mr-1" />}
       {status === 'In Progress' && <Zap size={10} className="mr-1" />}
       {status === 'Blocked' && <AlertTriangle size={10} className="mr-1" />}
+      {status === 'Yet to Upload' && <Upload size={10} className="mr-1" />}
       {status}
     </span>
   )
 }
 
-function ProjectTrackerTab({ project, jobs, isAdmin }) {
-  const [filter, setFilter] = useState('All')
+function ProjectTrackerTab({ project, jobs, canExport }) {
+  function fmtDate(value) {
+    if (!value) return '-'
+    const d = new Date(value)
+    if (Number.isNaN(d.getTime())) return '-'
+    return d.toLocaleDateString()
+  }
 
-  const FILTERS = ['All', 'SC Pending', 'Uni Pending', 'Fully Done']
+  function fmtDateTime(value) {
+    if (!value) return '-'
+    const d = new Date(value)
+    if (Number.isNaN(d.getTime())) return '-'
+    return d.toLocaleString()
+  }
 
-  const filtered = jobs.filter(j => {
-    if (filter === 'SC Pending')   return j.sc_status  !== 'Done'
-    if (filter === 'Uni Pending')  return j.uni_status !== 'Done'
-    if (filter === 'Fully Done')   return j.sc_status  === 'Done' && j.uni_status === 'Done'
-    return true
-  })
+  const rows = useMemo(() => {
+    const map = new Map()
+    for (const j of (jobs || [])) {
+      const key = `${(j.title || '').trim().toLowerCase()}|${j.capture_date || ''}`
+      if (!map.has(key)) {
+        map.set(key, {
+          field_name: j.title || 'Untitled',
+          stand: {
+            captured_date: '-',
+            uploaded_date: '-',
+            uploaded_by: '-',
+            assigned_to: '-',
+            stage: 'Pending',
+            delivery_date: '-',
+          },
+          uniformity: {
+            captured_date: '-',
+            uploaded_date: '-',
+            uploaded_by: '-',
+            assigned_to: '-',
+            stage: 'Yet to Upload',
+            delivery_date: '-',
+          },
+        })
+      }
+      const row = map.get(key)
+
+      const target = (j.category || 'Stand Count') === 'Uniformity' ? row.uniformity : row.stand
+      const stage = (j.category || 'Stand Count') === 'Uniformity'
+        ? (j.uni_status || 'Pending')
+        : (j.sc_status || 'Pending')
+
+      target.captured_date = fmtDate(j.capture_date)
+      target.uploaded_date = fmtDateTime(j.created_at)
+      target.uploaded_by = j.created_by_name || '-'
+      target.assigned_to = j.assigned_to_name || 'Unassigned'
+      target.stage = stage
+      target.delivery_date = stage === 'Done' ? fmtDate(j.updated_at || j.created_at) : '-'
+    }
+    return Array.from(map.values()).sort((a, b) => a.field_name.localeCompare(b.field_name))
+  }, [jobs])
+
+  function trackerRows() {
+    return rows.map(r => [
+      `"${(r.field_name || '').replace(/"/g, '""')}"`,
+      r.stand.captured_date,
+      r.stand.uploaded_date,
+      `"${(r.stand.uploaded_by || '').replace(/"/g, '""')}"`,
+      `"${(r.stand.assigned_to || '').replace(/"/g, '""')}"`,
+      r.stand.stage,
+      r.stand.delivery_date,
+      r.uniformity.captured_date,
+      r.uniformity.uploaded_date,
+      `"${(r.uniformity.uploaded_by || '').replace(/"/g, '""')}"`,
+      `"${(r.uniformity.assigned_to || '').replace(/"/g, '""')}"`,
+      r.uniformity.stage,
+      r.uniformity.delivery_date,
+    ])
+  }
 
   function downloadCSV() {
-    const headers = ['Field Name', 'Stand Count', 'Uniformity', 'Assigned To', 'Submitted By', 'Date Submitted', 'Notes']
-    const rows = jobs.map(j => [
-      `"${(j.title || '').replace(/"/g, '""')}"`,
-      j.sc_status  || 'Pending',
-      j.uni_status || 'Pending',
-      j.assigned_to_name  || 'Unassigned',
-      j.created_by_name   || '—',
-      new Date(j.created_at).toLocaleDateString(),
-      `"${(j.description || '').replace(/"/g, '""')}"`,
-    ])
-    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const headers = [
+      'Field Name',
+      'SC Captured Date', 'SC Uploaded Date', 'SC Uploaded By', 'SC Assigned To', 'SC Staged', 'SC Delivery Date',
+      'UNI Captured Date', 'UNI Uploaded Date', 'UNI Uploaded By', 'UNI Assigned To', 'UNI Staged', 'UNI Delivery Date',
+    ]
+    const csv = [headers.join(','), ...trackerRows().map(r => r.join(','))].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href     = url
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
     a.download = `${project.name.replace(/\s+/g, '_')}_tracker_${new Date().toISOString().slice(0,10)}.csv`
     a.click()
     URL.revokeObjectURL(url)
-    toast.success('Tracker downloaded')
+    toast.success('CSV downloaded')
+  }
+
+  function downloadExcel() {
+    const headers = [
+      'Field Name',
+      'SC Captured Date', 'SC Uploaded Date', 'SC Uploaded By', 'SC Assigned To', 'SC Staged', 'SC Delivery Date',
+      'UNI Captured Date', 'UNI Uploaded Date', 'UNI Uploaded By', 'UNI Assigned To', 'UNI Staged', 'UNI Delivery Date',
+    ]
+    const rows = trackerRows().map(r => r.map(v => String(v || '').replace(/^"|"$/g, '')))
+    const table = `
+      <table border="1">
+        <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(r => `<tr>${r.map(v => `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    `
+    const blob = new Blob([table], { type: 'application/vnd.ms-excel' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${project.name.replace(/\s+/g, '_')}_tracker_${new Date().toISOString().slice(0,10)}.xls`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('Excel downloaded')
+  }
+
+  function downloadPDF() {
+    const html = `
+      <html><head><title>${project.name} Tracker</title>
+      <style>
+        body{font-family:Arial,sans-serif;padding:16px}
+        h2{margin:0 0 12px}
+        table{width:100%;border-collapse:collapse;font-size:11px}
+        th,td{border:1px solid #999;padding:5px;text-align:left}
+        th{background:#efefef}
+      </style></head><body>
+        <h2>${project.name} - Project Tracker</h2>
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2">Field Name</th>
+              <th colspan="6">Standcount</th>
+              <th colspan="6">Uniformity</th>
+            </tr>
+            <tr>
+              <th>Captured Date</th><th>Uploaded Date</th><th>Uploaded By</th><th>Assigned to</th><th>Staged</th><th>Delivery Date</th>
+              <th>Captured Date</th><th>Uploaded Date</th><th>Uploaded By</th><th>Assigned to</th><th>Staged</th><th>Delivery Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `<tr>
+              <td>${r.field_name}</td>
+              <td>${r.stand.captured_date}</td><td>${r.stand.uploaded_date}</td><td>${r.stand.uploaded_by}</td><td>${r.stand.assigned_to}</td><td>${r.stand.stage}</td><td>${r.stand.delivery_date}</td>
+              <td>${r.uniformity.captured_date}</td><td>${r.uniformity.uploaded_date}</td><td>${r.uniformity.uploaded_by}</td><td>${r.uniformity.assigned_to}</td><td>${r.uniformity.stage}</td><td>${r.uniformity.delivery_date}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </body></html>
+    `
+    const w = window.open('', '_blank', 'width=1100,height=760')
+    if (!w) return
+    w.document.write(html)
+    w.document.close()
+    w.focus()
+    w.print()
   }
 
   return (
     <div className="space-y-4">
-      {/* Header row */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex gap-1 flex-wrap">
-          {FILTERS.map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 h-8 text-xs rounded-lg border transition-colors ${
-                filter === f
-                  ? 'bg-zinc-100 text-zinc-900 border-zinc-100'
-                  : 'bg-transparent text-zinc-400 border-zinc-800 hover:border-zinc-600'}`}>
-              {f}
-            </button>
-          ))}
-        </div>
-        {isAdmin && (
+      {canExport && (
+        <div className="flex items-center justify-end gap-2">
           <button onClick={downloadCSV}
             className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
-            <Download size={12} /> Export CSV
+            <Download size={12} /> CSV
           </button>
-        )}
-      </div>
-
-      {/* Summary chips */}
-      <div className="flex gap-2 flex-wrap text-xs">
-        <span className="px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400">{jobs.length} total fields</span>
-        <span className="px-2.5 py-1 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-300">
-          {jobs.filter(j => j.sc_status === 'Done').length} SC done
-        </span>
-        <span className="px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300">
-          {jobs.filter(j => j.uni_status === 'Done').length} Uni done
-        </span>
-        <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
-          {jobs.filter(j => j.sc_status === 'Done' && j.uni_status === 'Done').length} fully done
-        </span>
-      </div>
-
-      {/* Matrix table */}
-      {filtered.length === 0 ? (
-        <GlassCard className="p-10 text-center">
-          <div className="text-zinc-500 text-sm">No fields match this filter.</div>
-        </GlassCard>
-      ) : (
-        <GlassCard className="overflow-hidden">
-          {/* Table header */}
-          <div className="grid grid-cols-[1fr_120px_120px_120px] gap-px bg-zinc-800/40 text-[10px] uppercase tracking-wider text-zinc-500">
-            <div className="bg-zinc-950/80 px-4 py-3">Field Name</div>
-            <div className="bg-zinc-950/80 px-3 py-3 text-center">Stand Count</div>
-            <div className="bg-zinc-950/80 px-3 py-3 text-center">Uniformity</div>
-            <div className="bg-zinc-950/80 px-3 py-3 text-center">Assigned To</div>
-          </div>
-          {/* Table rows */}
-          <div className="divide-y divide-zinc-800/40">
-            {filtered.map((job, i) => (
-              <motion.div key={job.id}
-                initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.03 }}
-                className="grid grid-cols-[1fr_120px_120px_120px] gap-px bg-zinc-800/20 hover:bg-zinc-800/40 transition-colors">
-                {/* Field name */}
-                <div className="bg-zinc-950/60 px-4 py-3.5">
-                  <div className="text-sm text-zinc-100 font-medium">{job.title}</div>
-                  {job.description && (
-                    <div className="text-[11px] text-zinc-600 mt-0.5 truncate">{job.description}</div>
-                  )}
-                  <div className="text-[10px] text-zinc-700 mt-1">
-                    {new Date(job.created_at).toLocaleDateString()}
-                    {job.created_by_name && <span> · {job.created_by_name}</span>}
-                  </div>
-                </div>
-                {/* Stand Count */}
-                <div className="bg-zinc-950/60 px-3 py-3.5 flex items-center justify-center">
-                  <StageChip status={job.sc_status || 'Pending'} />
-                </div>
-                {/* Uniformity */}
-                <div className="bg-zinc-950/60 px-3 py-3.5 flex items-center justify-center">
-                  <StageChip status={job.uni_status || 'Pending'} />
-                </div>
-                {/* Assigned to */}
-                <div className="bg-zinc-950/60 px-3 py-3.5 flex items-center justify-center">
-                  {job.assigned_to_name ? (
-                    <span className="text-xs text-zinc-300 flex items-center gap-1">
-                      <User size={10} className="shrink-0" />{job.assigned_to_name}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-zinc-600">Unassigned</span>
-                  )}
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </GlassCard>
+          <button onClick={downloadExcel}
+            className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
+            <FileText size={12} /> Excel
+          </button>
+          <button onClick={downloadPDF}
+            className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
+            <FileCheck size={12} /> PDF
+          </button>
+        </div>
       )}
+
+      <GlassCard className="overflow-hidden">
+        {rows.length === 0 ? (
+          <div className="p-10 text-center text-zinc-500 text-sm">No tracker rows yet.</div>
+        ) : (
+          <div className="overflow-auto">
+            <table className="w-full min-w-[1500px] text-sm">
+              <thead>
+                <tr className="bg-zinc-950/80 border-b border-zinc-800/60 text-[12px] text-zinc-300">
+                  <th className="text-left px-3 py-2" rowSpan={2}>Field Name</th>
+                  <th className="text-center px-3 py-2" colSpan={6}>Standcount</th>
+                  <th className="text-center px-3 py-2" colSpan={6}>Uniformity</th>
+                </tr>
+                <tr className="bg-zinc-950/70 border-b border-zinc-800/60 text-[10px] uppercase tracking-wider text-zinc-500">
+                  <th className="text-left px-3 py-2">Captured Date</th>
+                  <th className="text-left px-3 py-2">Uploaded Date</th>
+                  <th className="text-left px-3 py-2">Uploaded By</th>
+                  <th className="text-left px-3 py-2">Assigned to</th>
+                  <th className="text-left px-3 py-2">Staged</th>
+                  <th className="text-left px-3 py-2">Delivery Date</th>
+                  <th className="text-left px-3 py-2">Captured Date</th>
+                  <th className="text-left px-3 py-2">Uploaded Date</th>
+                  <th className="text-left px-3 py-2">Uploaded By</th>
+                  <th className="text-left px-3 py-2">Assigned to</th>
+                  <th className="text-left px-3 py-2">Staged</th>
+                  <th className="text-left px-3 py-2">Delivery Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.field_name}-${i}`} className="border-t border-zinc-800/40 bg-zinc-950/50">
+                    <td className="px-3 py-2.5 text-zinc-200 font-medium">{r.field_name}</td>
+                    <td className="px-3 py-2.5 text-zinc-400">{r.stand.captured_date}</td>
+                    <td className="px-3 py-2.5 text-zinc-400">{r.stand.uploaded_date}</td>
+                    <td className="px-3 py-2.5 text-zinc-300">{r.stand.uploaded_by}</td>
+                    <td className="px-3 py-2.5 text-zinc-300">{r.stand.assigned_to}</td>
+                    <td className="px-3 py-2.5 text-zinc-300">{r.stand.stage}</td>
+                    <td className="px-3 py-2.5 text-zinc-400">{r.stand.delivery_date}</td>
+                    <td className="px-3 py-2.5 text-zinc-400">{r.uniformity.captured_date}</td>
+                    <td className="px-3 py-2.5 text-zinc-400">{r.uniformity.uploaded_date}</td>
+                    <td className="px-3 py-2.5 text-zinc-300">{r.uniformity.uploaded_by}</td>
+                    <td className="px-3 py-2.5 text-zinc-300">{r.uniformity.assigned_to}</td>
+                    <td className="px-3 py-2.5 text-zinc-300">{r.uniformity.stage}</td>
+                    <td className="px-3 py-2.5 text-zinc-400">{r.uniformity.delivery_date}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
     </div>
   )
 }
 
 function SupportTicketsTab({ user }) {
   const isInternal = ['Super-Admin', 'Admin'].includes(user.role)
+  const isSuperAdmin = user.role === 'Super-Admin'
   const [tickets, setTickets] = useState([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -2421,6 +3013,18 @@ function SupportTicketsTab({ user }) {
         body: JSON.stringify({ status }),
       })
       toast.success('Ticket updated')
+      await loadTickets()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  async function deleteTicket(id) {
+    if (!isSuperAdmin) return
+    if (!confirm('Delete this support ticket? It can be restored from Bin.')) return
+    try {
+      await api(`/support-tickets/${id}`, { method: 'DELETE' })
+      toast.success('Ticket moved to Bin')
       await loadTickets()
     } catch (e) {
       toast.error(e.message)
@@ -2507,6 +3111,11 @@ function SupportTicketsTab({ user }) {
                       <option>Resolved</option>
                       <option>Closed</option>
                     </select>
+                    {isSuperAdmin && (
+                      <button onClick={() => deleteTicket(t.id)} className="h-8 px-2 rounded-lg border border-red-500/30 text-red-300 hover:bg-red-500/10 text-xs">
+                        Delete
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2590,15 +3199,24 @@ function ProjectDetailPage({
   const [tab, setTab] = useState(showDashboard ? 'dashboard' : 'jobs')
   const [jobs, setJobs] = useState([])
   const [assignedUserIds, setAssignedUserIds] = useState([])
-  const isAdmin = user.role === 'Client-Admin'
+  const [showEditProject, setShowEditProject] = useState(false)
+  const [projectInfo, setProjectInfo] = useState(project)
+  const isAdmin = ['Client-Admin', 'Admin', 'Super-Admin'].includes(user.role)
+  const canEditProjectInfo = ['Client-Admin', 'Admin', 'Super-Admin'].includes(user.role)
+  const canDeleteWorkspace = ['Client-Admin', 'Super-Admin'].includes(user.role)
+  const canRequestDeleteWorkspace = ['Admin', 'Client-User'].includes(user.role)
   const assignedUsers = orgUsers.filter(u => assignedUserIds.includes(u.id))
+
+  useEffect(() => {
+    setProjectInfo(project)
+  }, [project])
 
   useEffect(() => {
     if (!showDashboard && tab === 'dashboard') setTab('jobs')
   }, [showDashboard, tab])
 
   async function loadJobs() {
-    try { const r = await api(`/client-projects/${project.id}/jobs`); setJobs(r.jobs || []) }
+    try { const r = await api(`/client-projects/${projectInfo.id}/jobs`); setJobs(r.jobs || []) }
     catch (e) { toast.error(e.message) }
   }
   async function loadAssignments() {
@@ -2624,6 +3242,46 @@ function ProjectDetailPage({
     return r.user
   }
   useEffect(() => { loadJobs(); loadAssignments() }, [project.id])
+  useEffect(() => {
+    const t = setInterval(() => {
+      loadJobs()
+    }, 15000)
+    return () => clearInterval(t)
+  }, [project.id])
+
+  async function deleteWorkspace() {
+    if (!canDeleteWorkspace) return
+    if (!confirm('Delete this project workspace? It can be restored from Bin.')) return
+    try {
+      await api(`/client-projects/${project.id}`, { method: 'DELETE' })
+      toast.success('Workspace moved to Bin')
+      await onRefresh?.()
+      onBack?.()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  async function requestWorkspaceDelete() {
+    if (!canRequestDeleteWorkspace) return
+    const reason = window.prompt('Reason for delete request (required):', '')
+    if (!reason || !reason.trim()) return
+    try {
+      await api('/entity-delete-requests', {
+        method: 'POST',
+        body: JSON.stringify({ entity_type: 'client_project', entity_id: projectInfo.id, reason: reason.trim() }),
+      })
+      toast.success('Delete request submitted')
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  async function handleProjectInfoUpdated(nextProject) {
+    if (nextProject) setProjectInfo(prev => ({ ...prev, ...nextProject }))
+    setShowEditProject(false)
+    await onRefresh?.()
+  }
 
   const tabs = [
     ...(showDashboard ? [{ k: 'dashboard', l: 'Dashboard', i: BarChart3 }] : []),
@@ -2631,6 +3289,7 @@ function ProjectDetailPage({
     { k: 'tracker', l: 'Project Tracker', i: Activity },
     { k: 'issues', l: 'Issue Tracker', i: AlertTriangle },
     { k: 'support', l: 'Support Tickets', i: Bell },
+    ...(user.role === 'Client-Admin' ? [{ k: 'delete-requests', l: 'Delete Requests', i: FileWarning }] : []),
     ...(isAdmin ? [{ k: 'team', l: 'Team', i: Users }] : []),
   ]
 
@@ -2662,12 +3321,15 @@ function ProjectDetailPage({
               <Layers size={16} className="text-blue-300" />
             </div>
             <div className="min-w-0">
-              <div className="font-semibold truncate">{project.name}</div>
-              <div className="text-[11px] text-zinc-500 truncate">{project.type} · {project.head}</div>
+              <div className="font-semibold truncate">{projectInfo.name}</div>
+              <div className="text-[11px] text-zinc-500 truncate">{projectInfo.type} · {projectInfo.head}</div>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <PeriodChip />
+            {canEditProjectInfo && <Btn onClick={() => setShowEditProject(true)} variant="outline" size="sm" icon={Settings}>Edit Info</Btn>}
+            {canDeleteWorkspace && <Btn onClick={deleteWorkspace} variant="danger" size="sm" icon={Trash2}>Delete Workspace</Btn>}
+            {canRequestDeleteWorkspace && <Btn onClick={requestWorkspaceDelete} variant="ghost" size="sm" icon={FileWarning}>Request Delete</Btn>}
             {onLogout && <Btn onClick={onLogout} variant="ghost" size="sm" icon={LogOut}>Sign out</Btn>}
           </div>
         </div>
@@ -2682,14 +3344,15 @@ function ProjectDetailPage({
         </div>
       </div>
       <div className="px-4 md:px-8 py-6 relative z-10">
-        {tab === 'dashboard' && <ProjectDashboardTab project={project} jobs={jobs} teamMembers={assignedUsers} />}
-        {tab === 'jobs' && <JobCardsTab project={project} user={user} orgUsers={orgUsers} jobs={jobs} onRefresh={loadJobs} isAdmin={isAdmin} />}
-        {tab === 'tracker' && <ProjectTrackerTab project={project} jobs={jobs} isAdmin={isAdmin} />}
-        {tab === 'issues' && <IssueTrackerTab project={project} jobs={jobs} onRefresh={loadJobs} />}
+        {tab === 'dashboard' && <ProjectDashboardTab project={projectInfo} jobs={jobs} teamMembers={assignedUsers} />}
+        {tab === 'jobs' && <JobCardsTab project={projectInfo} user={user} orgUsers={orgUsers} jobs={jobs} onRefresh={loadJobs} isAdmin={isAdmin} />}
+        {tab === 'tracker' && <ProjectTrackerTab project={projectInfo} jobs={jobs} canExport={true} />}
+        {tab === 'issues' && <IssueTrackerTab project={projectInfo} jobs={jobs} onRefresh={loadJobs} />}
         {tab === 'support' && <SupportTicketsTab user={user} />}
+        {tab === 'delete-requests' && <EntityDeleteRequestsTab user={user} />}
         {tab === 'team' && isAdmin && (
           <ProjectTeamTab
-            project={project}
+            project={projectInfo}
             orgUsers={orgUsers}
             assignedUserIds={assignedUserIds}
             onCreateUser={createTeamUser}
@@ -2697,6 +3360,16 @@ function ProjectDetailPage({
           />
         )}
       </div>
+
+      <AnimatePresence>
+        {showEditProject && (
+          <EditProjectInfoModal
+            project={projectInfo}
+            onDone={handleProjectInfoUpdated}
+            onCancel={() => setShowEditProject(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

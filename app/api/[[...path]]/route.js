@@ -148,6 +148,67 @@ async function addJobComment(jobId, user, comment, stage = 'General') {
   })
 }
 
+async function moveToRecycleBin({ tableName, entityType, id, user, scope = null }) {
+  let fetchQuery = sb.from(tableName).select('*').eq('id', id)
+  if (scope?.field && scope?.value !== undefined) fetchQuery = fetchQuery.eq(scope.field, scope.value)
+  const { data: row, error: fetchError } = await fetchQuery.maybeSingle()
+  if (fetchError) throw new Error(fetchError.message)
+  if (!row) return { ok: false, reason: 'not_found' }
+
+  const { error: binError } = await sb.from('recycle_bin').insert({
+    id: uuidv4(),
+    entity_type: entityType,
+    table_name: tableName,
+    entity_id: row.id,
+    payload: row,
+    deleted_by: user?.id || null,
+    deleted_by_username: user?.username || 'system',
+  })
+  if (binError) throw new Error(binError.message)
+
+  let deleteQuery = sb.from(tableName).delete().eq('id', id)
+  if (scope?.field && scope?.value !== undefined) deleteQuery = deleteQuery.eq(scope.field, scope.value)
+  const { error: deleteError } = await deleteQuery
+  if (deleteError) throw new Error(deleteError.message)
+  return { ok: true, row }
+}
+
+async function restoreFromRecycleBin(entry, user) {
+  const tableName = entry.table_name
+  const payload = { ...(entry.payload || {}) }
+  if (!payload.id) throw new Error('Invalid recycle bin payload')
+
+  const { error: restoreError } = await sb.from(tableName).upsert(payload, { onConflict: 'id' })
+  if (restoreError) throw new Error(restoreError.message)
+
+  await sb.from('recycle_bin').update({
+    restored_at: new Date().toISOString(),
+    restored_by: user?.id || null,
+    restored_by_username: user?.username || 'system',
+  }).eq('id', entry.id)
+}
+
+async function resolveEntityScope(entityType, entityId) {
+  if (entityType === 'job') {
+    const { data: job } = await sb.from('jobs').select('id, project_id').eq('id', entityId).maybeSingle()
+    if (!job) return null
+    const { data: project } = await sb.from('client_projects').select('id, client_id').eq('id', job.project_id).maybeSingle()
+    if (!project) return null
+    return { tableName: 'jobs', entityType, id: entityId, client_id: project.client_id, scope: { field: 'project_id', value: job.project_id } }
+  }
+  if (entityType === 'client_project') {
+    const { data: project } = await sb.from('client_projects').select('id, client_id').eq('id', entityId).maybeSingle()
+    if (!project) return null
+    return { tableName: 'client_projects', entityType, id: entityId, client_id: project.client_id, scope: null }
+  }
+  if (entityType === 'project') {
+    const { data: project } = await sb.from('projects').select('id, client_id').eq('id', entityId).maybeSingle()
+    if (!project) return null
+    return { tableName: 'projects', entityType, id: entityId, client_id: project.client_id, scope: null }
+  }
+  return null
+}
+
 // =====================================================================
 export async function OPTIONS() { return corsify(new NextResponse(null, { status: 200 })) }
 
@@ -239,7 +300,8 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
       const id = route.split('/')[2]
-      await sb.from('clients').delete().eq('id', id)
+      const moved = await moveToRecycleBin({ tableName: 'clients', entityType: 'client', id, user })
+      if (!moved.ok) return json({ error: 'Client not found' }, 404)
       return json({ success: true })
     }
 
@@ -295,9 +357,10 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — only Super-Admin can delete users' }, 403)
       const id = route.split('/')[2]
-      const { data: target } = await sb.from('users').select('username').eq('id', id).maybeSingle()
+      const { data: target } = await sb.from('users').select('id, username').eq('id', id).maybeSingle()
+      if (!target) return json({ error: 'User not found' }, 404)
       if (target?.username === 'devbond01') return json({ error: 'Cannot delete Super-Admin' }, 400)
-      await sb.from('users').delete().eq('id', id)
+      await moveToRecycleBin({ tableName: 'users', entityType: 'user', id, user })
       return json({ success: true })
     }
 
@@ -361,8 +424,125 @@ async function handleRoute(request, context) {
       if (action === 'approve') {
         const { data: target } = await sb.from('users').select('username').eq('id', req.target_user_id).maybeSingle()
         if (target?.username === 'devbond01') return json({ error: 'Cannot delete Super-Admin' }, 400)
-        await sb.from('users').delete().eq('id', req.target_user_id)
+        await moveToRecycleBin({ tableName: 'users', entityType: 'user', id: req.target_user_id, user })
       }
+      return json({ success: true })
+    }
+
+    if (route === '/recycle-bin' && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const { data, error } = await sb.from('recycle_bin').select('*').order('deleted_at', { ascending: false }).limit(300)
+      if (error) return json({ error: error.message }, 500)
+      return json({ items: data || [] })
+    }
+
+    if (route === '/entity-delete-requests' && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+      if (![CLIENT_USER, CLIENT_ADMIN, ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
+
+      const { entity_type, entity_id, reason } = await request.json()
+      if (!entity_type || !entity_id) return json({ error: 'entity_type and entity_id are required' }, 400)
+
+      const resolved = await resolveEntityScope(entity_type, entity_id)
+      if (!resolved) return json({ error: 'Entity not found' }, 404)
+
+      const targetRole = user.role === CLIENT_USER ? CLIENT_ADMIN : SUPER_ADMIN
+      if (user.role === CLIENT_USER && resolved.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
+      if (user.role === CLIENT_ADMIN && resolved.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
+
+      const { data: existing } = await sb.from('entity_delete_requests')
+        .select('id')
+        .eq('entity_type', entity_type)
+        .eq('entity_id', entity_id)
+        .eq('status', 'pending')
+        .maybeSingle()
+      if (existing) return json({ error: 'Delete request already pending for this item' }, 409)
+
+      const { error } = await sb.from('entity_delete_requests').insert({
+        id: uuidv4(),
+        entity_type,
+        entity_id,
+        table_name: resolved.tableName,
+        client_id: resolved.client_id || null,
+        requested_by: user.id,
+        requested_by_username: user.username,
+        requested_by_role: user.role,
+        target_role: targetRole,
+        reason: (reason || '').trim() || null,
+      })
+      if (error) return json({ error: error.message }, 500)
+      return json({ success: true }, 201)
+    }
+
+    if (route === '/entity-delete-requests' && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+
+      let q = sb.from('entity_delete_requests').select('*').eq('status', 'pending').order('created_at', { ascending: false })
+      if (user.role === SUPER_ADMIN) {
+        q = q.eq('target_role', SUPER_ADMIN)
+      } else if (user.role === CLIENT_ADMIN) {
+        q = q.eq('target_role', CLIENT_ADMIN).eq('client_id', user.client_id)
+      } else {
+        q = q.eq('requested_by', user.id)
+      }
+      const { data, error } = await q
+      if (error) return json({ error: error.message }, 500)
+      return json({ requests: data || [] })
+    }
+
+    if (route.match(/^\/entity-delete-requests\/[^/]+$/) && method === 'PATCH') {
+      const user = await getUserFromRequest(request)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+      const id = route.split('/')[2]
+      const { action } = await request.json()
+      if (!['approve', 'reject'].includes(action)) return json({ error: 'action must be approve or reject' }, 400)
+
+      const { data: req } = await sb.from('entity_delete_requests').select('*').eq('id', id).maybeSingle()
+      if (!req || req.status !== 'pending') return json({ error: 'Request not found or already resolved' }, 404)
+
+      if (user.role === SUPER_ADMIN) {
+        if (req.target_role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
+      } else if (user.role === CLIENT_ADMIN) {
+        if (req.target_role !== CLIENT_ADMIN || req.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
+      } else {
+        return json({ error: 'Forbidden' }, 403)
+      }
+
+      if (action === 'approve') {
+        const resolved = await resolveEntityScope(req.entity_type, req.entity_id)
+        if (!resolved) return json({ error: 'Entity no longer exists' }, 409)
+        if (user.role === CLIENT_ADMIN && resolved.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
+        await moveToRecycleBin({
+          tableName: resolved.tableName,
+          entityType: req.entity_type,
+          id: req.entity_id,
+          user,
+          scope: resolved.scope,
+        })
+      }
+
+      await sb.from('entity_delete_requests').update({
+        status: action === 'approve' ? 'approved' : 'rejected',
+        reviewed_by: user.id,
+        reviewed_by_username: user.username,
+        reviewed_at: new Date().toISOString(),
+      }).eq('id', id)
+
+      return json({ success: true })
+    }
+
+    if (route.match(/^\/recycle-bin\/[^/]+\/restore$/) && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const id = route.split('/')[2]
+      const { data: entry, error } = await sb.from('recycle_bin').select('*').eq('id', id).maybeSingle()
+      if (error) return json({ error: error.message }, 500)
+      if (!entry) return json({ error: 'Recycle entry not found' }, 404)
+      if (entry.restored_at) return json({ error: 'Entry already restored' }, 409)
+      await restoreFromRecycleBin(entry, user)
       return json({ success: true })
     }
 
@@ -455,6 +635,16 @@ async function handleRoute(request, context) {
       }).select().single()
       if (error) return json({ error: error.message }, 500)
       return json({ ticket: data }, 201)
+    }
+
+    const supportDeleteMatch = route.match(/^\/support-tickets\/([^/]+)$/)
+    if (supportDeleteMatch && method === 'DELETE') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const ticketId = supportDeleteMatch[1]
+      const moved = await moveToRecycleBin({ tableName: 'support_tickets', entityType: 'support_ticket', id: ticketId, user })
+      if (!moved.ok) return json({ error: 'Ticket not found' }, 404)
+      return json({ success: true })
     }
 
     const supportMatch = route.match(/^\/support-tickets\/([^/]+)$/)
@@ -590,6 +780,15 @@ async function handleRoute(request, context) {
       if (p.status !== 'Delivery') return json({ error: 'project not in Delivery stage yet' }, 400)
       await sb.from('projects').update({ delivery_confirmed: true, delivery_confirmed_at: new Date().toISOString() }).eq('id', id)
       await audit(id, user, `Client confirmed delivery.`)
+      return json({ success: true })
+    }
+
+    if (route.match(/^\/projects\/[^/]+$/) && method === 'DELETE') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const id = route.split('/')[2]
+      const moved = await moveToRecycleBin({ tableName: 'projects', entityType: 'project', id, user })
+      if (!moved.ok) return json({ error: 'Project not found' }, 404)
       return json({ success: true })
     }
 
@@ -756,13 +955,15 @@ async function handleRoute(request, context) {
 
     if (route === '/client-projects' && method === 'POST') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== CLIENT_ADMIN) return json({ error: 'Forbidden' }, 403)
+      if (!user || ![CLIENT_ADMIN, ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
       const body = await request.json()
-      const { name, type, start_date, end_date, head } = body
+      const { name, type, start_date, end_date, head, client_id } = body
+      const clientId = user.role === CLIENT_ADMIN ? user.client_id : client_id
+      if (!clientId) return json({ error: 'client_id is required' }, 400)
       if (!type || !start_date || !head) return json({ error: 'Project category and project admin are required' }, 400)
       const { data, error } = await sb.from('client_projects').insert({
         id: uuidv4(),
-        client_id: user.client_id,
+        client_id: clientId,
         name: (name || '').trim() || `${type} - ${head}`,
         type,
         start_date,
@@ -772,6 +973,63 @@ async function handleRoute(request, context) {
       }).select().single()
       if (error) return json({ error: error.message }, 500)
       return json({ project: data }, 201)
+    }
+
+    const clientProjectMatch = route.match(/^\/client-projects\/([^/]+)$/)
+    if (clientProjectMatch && method === 'PATCH') {
+      const user = await getUserFromRequest(request)
+      if (!user || ![CLIENT_ADMIN, ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
+      const projectId = clientProjectMatch[1]
+      const body = await request.json()
+
+      let getQuery = sb.from('client_projects').select('*').eq('id', projectId)
+      if (user.role === CLIENT_ADMIN) getQuery = getQuery.eq('client_id', user.client_id)
+      const { data: existing } = await getQuery.maybeSingle()
+      if (!existing) return json({ error: 'Project not found' }, 404)
+
+      const update = {}
+      if (body.name !== undefined) {
+        const v = String(body.name || '').trim()
+        update.name = v || `${existing.type} - ${existing.head}`
+      }
+      if (body.type !== undefined) {
+        const v = String(body.type || '').trim()
+        if (!v) return json({ error: 'type cannot be empty' }, 400)
+        update.type = v
+      }
+      if (body.start_date !== undefined) {
+        const v = String(body.start_date || '').trim()
+        if (!v) return json({ error: 'start_date cannot be empty' }, 400)
+        update.start_date = v
+      }
+      if (body.end_date !== undefined) {
+        update.end_date = body.end_date || null
+      }
+      if (body.head !== undefined) {
+        const v = String(body.head || '').trim()
+        if (!v) return json({ error: 'head cannot be empty' }, 400)
+        update.head = v
+      }
+
+      if (Object.keys(update).length === 0) return json({ error: 'No valid fields to update' }, 400)
+
+      const { data, error } = await sb.from('client_projects')
+        .update({ ...update, updated_at: new Date().toISOString() })
+        .eq('id', projectId)
+        .select()
+        .single()
+      if (error) return json({ error: error.message }, 500)
+      return json({ project: data })
+    }
+
+    if (clientProjectMatch && method === 'DELETE') {
+      const user = await getUserFromRequest(request)
+      if (!user || ![SUPER_ADMIN, CLIENT_ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
+      const projectId = clientProjectMatch[1]
+      const scope = user.role === CLIENT_ADMIN ? { field: 'client_id', value: user.client_id } : null
+      const moved = await moveToRecycleBin({ tableName: 'client_projects', entityType: 'client_project', id: projectId, user, scope })
+      if (!moved.ok) return json({ error: 'Project not found' }, 404)
+      return json({ success: true })
     }
 
     // --- JOBS ---
@@ -817,8 +1075,13 @@ async function handleRoute(request, context) {
         if (!title?.trim()) return json({ error: 'Title required' }, 400)
         if (!capture_date)   return json({ error: 'Capture date required' }, 400)
         if (!drone_name?.trim()) return json({ error: 'Drone name required' }, 400)
+        if (!comments?.trim()) return json({ error: 'Comments are required' }, 400)
         const VALID_CATS = ['Stand Count', 'Uniformity']
         if (category && !VALID_CATS.includes(category)) return json({ error: 'Invalid category' }, 400)
+        if (!flight_count || parseInt(flight_count, 10) < 1) return json({ error: 'Flight count required' }, 400)
+        if (!Array.isArray(flights) || flights.length < 1) return json({ error: 'Flight data required' }, 400)
+        const invalidFlight = flights.some(f => f?.image_count === null || f?.image_count === undefined || f?.csv_rows === null || f?.csv_rows === undefined)
+        if (invalidFlight) return json({ error: 'Each flight requires image count and CSV rows' }, 400)
         let assigneeId = null
 
         if (CLIENT_ROLES.includes(user.role)) {
@@ -926,8 +1189,14 @@ async function handleRoute(request, context) {
 
       if (method === 'DELETE') {
         if (![CLIENT_ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
-        const { error } = await sb.from('jobs').delete().eq('id', jobId).eq('project_id', projectId)
-        if (error) return json({ error: error.message }, 500)
+        const moved = await moveToRecycleBin({
+          tableName: 'jobs',
+          entityType: 'job',
+          id: jobId,
+          user,
+          scope: { field: 'project_id', value: projectId },
+        })
+        if (!moved.ok) return json({ error: 'Job not found' }, 404)
         return json({ ok: true })
       }
     }
