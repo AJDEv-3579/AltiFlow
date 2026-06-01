@@ -22,7 +22,18 @@ function strip(doc) {
   return rest
 }
 
+// ---------- Role helpers ----------
+const SUPER_ADMIN = 'Super-Admin'
+const ADMIN       = 'Admin'
+const CLIENT_ADMIN = 'Client-Admin'
+const CLIENT_USER  = 'Client-User'
+const INTERNAL_ROLES = [SUPER_ADMIN, ADMIN]
+const CLIENT_ROLES   = [CLIENT_ADMIN, CLIENT_USER]
+
 // ---------- Seeding ----------
+// Only seeds the one Super-Admin account.
+// All other users must be created manually via the Super-Admin panel.
+// This prevents deleted users from reappearing after serverless cold-starts.
 let seedDone = false
 let seedError = null
 async function ensureSeed() {
@@ -31,45 +42,20 @@ async function ensureSeed() {
     // Probe — if tables don't exist, return a friendly setup error
     const { error: probeErr } = await sb.from('users').select('id').limit(1)
     if (probeErr) {
-      seedError = `Supabase tables not found. Please run /app/supabase/schema.sql in the SQL Editor. (${probeErr.message})`
+      seedError = `Supabase tables not found. Please run /supabase/schema.sql in the SQL Editor. (${probeErr.message})`
       console.error('[Altiflow]', seedError)
       return
     }
     seedError = null
 
-    const { data: admin } = await sb.from('users').select('id').eq('username', 'devbond01').maybeSingle()
-    if (!admin) {
+    const { data: superAdmin } = await sb.from('users').select('id').eq('username', 'devbond01').maybeSingle()
+    if (!superAdmin) {
       await sb.from('users').insert({
         id: uuidv4(),
         username: 'devbond01',
         password_hash: await bcrypt.hash('63pk0wpT@123', 10),
-        role: 'Admin', client_id: null, must_change_password: false,
+        role: SUPER_ADMIN, client_id: null, must_change_password: false,
       })
-    }
-    let { data: bayer } = await sb.from('clients').select('*').eq('name', 'Bayer').maybeSingle()
-    if (!bayer) {
-      const { data } = await sb.from('clients').insert({ id: uuidv4(), name: 'Bayer', logo_url: '' }).select().single()
-      bayer = data
-    }
-    if (bayer) {
-      const { data: bayerUser } = await sb.from('users').select('id').eq('username', 'bayer').maybeSingle()
-      if (!bayerUser) {
-        await sb.from('users').insert({
-          id: uuidv4(), username: 'bayer',
-          password_hash: await bcrypt.hash(DEFAULT_TEAM_PWD, 10),
-          role: 'Client', client_id: bayer.id, must_change_password: true,
-        })
-      }
-    }
-    for (const name of ['Rohit', 'Shalini', 'Advik']) {
-      const { data: exists } = await sb.from('users').select('id').eq('username', name).maybeSingle()
-      if (!exists) {
-        await sb.from('users').insert({
-          id: uuidv4(), username: name,
-          password_hash: await bcrypt.hash(DEFAULT_TEAM_PWD, 10),
-          role: 'Team', client_id: null, must_change_password: true,
-        })
-      }
     }
     seedDone = true
     console.log('[Altiflow] Seed complete')
@@ -123,6 +109,22 @@ async function nextReflyAssignee() {
   return user
 }
 
+async function nextJobAdminAssignee() {
+  const { data: admins, error: adminErr } = await sb.from('users').select('id').eq('role', ADMIN).order('created_at', { ascending: true })
+  if (adminErr || !admins || admins.length === 0) return null
+
+  // Keep a separate counter from refly round-robin so both systems are independent.
+  const stateKey = 'job_admin_rr_index'
+  const { data: state } = await sb.from('system_state').select('value').eq('key', stateKey).maybeSingle()
+  if (!state) {
+    await sb.from('system_state').insert({ key: stateKey, value: 0 })
+  }
+  const current = state?.value ?? 0
+  const idx = current % admins.length
+  await sb.from('system_state').update({ value: current + 1 }).eq('key', stateKey)
+  return admins[idx]
+}
+
 // ---------- Audit ----------
 async function audit(projectId, user, desc) {
   await sb.from('audit_logs').insert({
@@ -131,6 +133,18 @@ async function audit(projectId, user, desc) {
     user_id: user?.id || null,
     username: user?.username || 'system',
     action_desc: desc,
+  })
+}
+
+async function addJobComment(jobId, user, comment, stage = 'General') {
+  if (!comment?.trim()) return
+  await sb.from('job_comments').insert({
+    id: uuidv4(),
+    job_id: jobId,
+    user_id: user?.id || null,
+    username: user?.username || 'system',
+    stage,
+    comment: comment.trim(),
   })
 }
 
@@ -206,14 +220,14 @@ async function handleRoute(request, context) {
     // --- CLIENTS ---
     if (route === '/clients' && method === 'GET') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== 'Admin') return json({ error: 'Forbidden' }, 403)
+      if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
       const { data } = await sb.from('clients').select('*').order('created_at', { ascending: false })
       return json({ clients: data || [] })
     }
 
     if (route === '/clients' && method === 'POST') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== 'Admin') return json({ error: 'Forbidden' }, 403)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
       const { name, logo_url } = await request.json()
       if (!name) return json({ error: 'name required' }, 400)
       const { data, error } = await sb.from('clients').insert({ id: uuidv4(), name, logo_url: logo_url || '' }).select().single()
@@ -223,7 +237,7 @@ async function handleRoute(request, context) {
 
     if (route.startsWith('/clients/') && method === 'DELETE') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== 'Admin') return json({ error: 'Forbidden' }, 403)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
       const id = route.split('/')[2]
       await sb.from('clients').delete().eq('id', id)
       return json({ success: true })
@@ -232,27 +246,44 @@ async function handleRoute(request, context) {
     // --- USERS ---
     if (route === '/users' && method === 'GET') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== 'Admin') return json({ error: 'Forbidden' }, 403)
-      const { data: users } = await sb.from('users').select('*').order('created_at', { ascending: false })
-      const { data: clients } = await sb.from('clients').select('*')
-      const cmap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
-      return json({ users: (users || []).map(u => ({ ...strip(u), client_name: cmap[u.client_id] || null })) })
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+      // Super-Admin/Admin see all users; Client-Admin sees only their org's Client-Users
+      if (INTERNAL_ROLES.includes(user.role)) {
+        const { data: users } = await sb.from('users').select('*').order('created_at', { ascending: false })
+        const { data: clients } = await sb.from('clients').select('*')
+        const cmap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
+        return json({ users: (users || []).map(u => ({ ...strip(u), client_name: cmap[u.client_id] || null })) })
+      }
+      if (user.role === CLIENT_ADMIN) {
+        const { data: users } = await sb.from('users').select('*')
+          .eq('client_id', user.client_id).eq('role', CLIENT_USER)
+          .order('created_at', { ascending: false })
+        return json({ users: (users || []).map(u => strip(u)) })
+      }
+      return json({ error: 'Forbidden' }, 403)
     }
 
     if (route === '/users' && method === 'POST') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== 'Admin') return json({ error: 'Forbidden' }, 403)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
       const { username, role, client_id, password } = await request.json()
       if (!username || !role) return json({ error: 'username & role required' }, 400)
+      // Super-Admin can create any role; Client-Admin can only create Client-User in their org
+      if (user.role === CLIENT_ADMIN) {
+        if (role !== CLIENT_USER) return json({ error: 'Client-Admin can only create Client-User accounts' }, 403)
+      } else if (!INTERNAL_ROLES.includes(user.role)) {
+        return json({ error: 'Forbidden' }, 403)
+      }
+      // Admin role cannot create users — only Super-Admin
+      if (user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can create users' }, 403)
       const { data: exists } = await sb.from('users').select('id').ilike('username', username).maybeSingle()
       if (exists) return json({ error: 'Username already exists' }, 409)
       const pwd = password || DEFAULT_TEAM_PWD
+      const assignedClientId = user.role === CLIENT_ADMIN ? user.client_id : (CLIENT_ROLES.includes(role) ? (client_id || null) : null)
       const newUser = {
-        id: uuidv4(),
-        username,
+        id: uuidv4(), username,
         password_hash: await bcrypt.hash(pwd, 10),
-        role,
-        client_id: role === 'Client' ? (client_id || null) : null,
+        role, client_id: assignedClientId,
         must_change_password: true,
       }
       const { data, error } = await sb.from('users').insert(newUser).select().single()
@@ -260,14 +291,187 @@ async function handleRoute(request, context) {
       return json({ user: strip(data), default_password: pwd })
     }
 
-    if (route.startsWith('/users/') && method === 'DELETE') {
+    if (route.startsWith('/users/') && !route.includes('/request-deletion') && method === 'DELETE') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== 'Admin') return json({ error: 'Forbidden' }, 403)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — only Super-Admin can delete users' }, 403)
       const id = route.split('/')[2]
       const { data: target } = await sb.from('users').select('username').eq('id', id).maybeSingle()
-      if (target?.username === 'devbond01') return json({ error: 'Cannot delete super admin' }, 400)
+      if (target?.username === 'devbond01') return json({ error: 'Cannot delete Super-Admin' }, 400)
       await sb.from('users').delete().eq('id', id)
       return json({ success: true })
+    }
+
+    // Client-Admin requests deletion of a Client-User
+    if (route.startsWith('/users/') && route.endsWith('/request-deletion') && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== CLIENT_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const targetId = route.split('/')[2]
+      const { reason } = await request.json().catch(() => ({}))
+      // Ensure target belongs to same client and is a Client-User
+      const { data: target } = await sb.from('users').select('*').eq('id', targetId).maybeSingle()
+      if (!target || target.client_id !== user.client_id || target.role !== CLIENT_USER)
+        return json({ error: 'User not found in your organization' }, 404)
+      // Prevent duplicate pending request
+      const { data: existing } = await sb.from('delete_requests')
+        .select('id').eq('target_user_id', targetId).eq('status', 'pending').maybeSingle()
+      if (existing) return json({ error: 'Deletion already requested for this user' }, 409)
+      await sb.from('delete_requests').insert({
+        id: uuidv4(), target_user_id: targetId, requested_by: user.id, reason: reason || null, status: 'pending',
+      })
+      return json({ success: true })
+    }
+
+    // Super-Admin: list pending deletion requests
+    if (route === '/deletion-requests' && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const { data } = await sb.from('delete_requests').select('*').eq('status', 'pending').order('created_at', { ascending: true })
+      if (!data || data.length === 0) return json({ requests: [] })
+      // Enrich with user info
+      const userIds = [...new Set(data.flatMap(r => [r.target_user_id, r.requested_by]))]
+      const { data: users } = await sb.from('users').select('id, username, role, client_id').in('id', userIds)
+      const { data: clients } = await sb.from('clients').select('id, name')
+      const umap = Object.fromEntries((users || []).map(u => [u.id, u]))
+      const cmap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
+      return json({
+        requests: data.map(r => ({
+          ...r,
+          target_username: umap[r.target_user_id]?.username,
+          target_role: umap[r.target_user_id]?.role,
+          target_client: cmap[umap[r.target_user_id]?.client_id] || null,
+          requested_by_username: umap[r.requested_by]?.username,
+        })),
+      })
+    }
+
+    // Super-Admin: approve or reject a deletion request
+    if (route.startsWith('/deletion-requests/') && method === 'PATCH') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const id = route.split('/')[2]
+      const { action } = await request.json() // 'approve' | 'reject'
+      if (!['approve', 'reject'].includes(action)) return json({ error: 'action must be approve or reject' }, 400)
+      const { data: req } = await sb.from('delete_requests').select('*').eq('id', id).maybeSingle()
+      if (!req || req.status !== 'pending') return json({ error: 'Request not found or already resolved' }, 404)
+      await sb.from('delete_requests').update({
+        status: action === 'approve' ? 'approved' : 'rejected',
+        reviewed_by: user.id,
+        reviewed_at: new Date().toISOString(),
+      }).eq('id', id)
+      if (action === 'approve') {
+        const { data: target } = await sb.from('users').select('username').eq('id', req.target_user_id).maybeSingle()
+        if (target?.username === 'devbond01') return json({ error: 'Cannot delete Super-Admin' }, 400)
+        await sb.from('users').delete().eq('id', req.target_user_id)
+      }
+      return json({ success: true })
+    }
+
+    // --- USER_PROJECTS (project assignment for Client-User) ---
+    if (route.match(/^\/projects\/[^/]+\/assign-users$/) && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      const projectId = route.split('/')[2]
+      const { user_ids } = await request.json()
+      if (!Array.isArray(user_ids)) return json({ error: 'user_ids array required' }, 400)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+
+      const { data: project } = await sb.from('projects').select('id, client_id').eq('id', projectId).maybeSingle()
+      if (!project) return json({ error: 'Project not found' }, 404)
+
+      if (user.role === CLIENT_ADMIN) {
+        const { data: validUsers } = await sb.from('users')
+          .select('id')
+          .in('id', user_ids)
+          .eq('client_id', user.client_id)
+          .eq('role', CLIENT_USER)
+        if (project.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
+        if ((validUsers || []).length !== user_ids.length) return json({ error: 'One or more users are not in your organization' }, 400)
+      } else {
+        if (!INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
+        if (user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can assign users' }, 403)
+      }
+
+      // Remove existing assignments then re-add
+      await sb.from('user_projects').delete().eq('project_id', projectId)
+      if (user_ids.length > 0) {
+        await sb.from('user_projects').insert(user_ids.map(uid => ({ id: uuidv4(), user_id: uid, project_id: projectId })))
+      }
+      return json({ success: true })
+    }
+
+    if (route.match(/^\/projects\/[^/]+\/assigned-users$/) && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+      const projectId = route.split('/')[2]
+      const { data } = await sb.from('user_projects').select('user_id').eq('project_id', projectId)
+      return json({ user_ids: (data || []).map(r => r.user_id) })
+    }
+
+    // --- SUPPORT TICKETS (App-level issues; independent from project issue tracker) ---
+    if (route === '/support-tickets' && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      if (!user || (![...INTERNAL_ROLES, ...CLIENT_ROLES].includes(user.role))) return json({ error: 'Forbidden' }, 403)
+
+      let q = sb.from('support_tickets').select('*').order('created_at', { ascending: false })
+      if (CLIENT_ROLES.includes(user.role)) q = q.eq('client_id', user.client_id)
+      const { data: tickets, error } = await q
+      if (error) return json({ error: error.message }, 500)
+
+      const creatorIds = [...new Set((tickets || []).map(t => t.created_by))]
+      const clientIds = [...new Set((tickets || []).map(t => t.client_id).filter(Boolean))]
+      const { data: creators } = creatorIds.length > 0
+        ? await sb.from('users').select('id, username, role').in('id', creatorIds)
+        : { data: [] }
+      const { data: clients } = clientIds.length > 0
+        ? await sb.from('clients').select('id, name').in('id', clientIds)
+        : { data: [] }
+
+      const creatorMap = Object.fromEntries((creators || []).map(u => [u.id, u]))
+      const clientMap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
+      return json({
+        tickets: (tickets || []).map(t => ({
+          ...t,
+          created_by_name: creatorMap[t.created_by]?.username || null,
+          created_by_role: creatorMap[t.created_by]?.role || null,
+          client_name: t.client_id ? (clientMap[t.client_id] || null) : null,
+        })),
+      })
+    }
+
+    if (route === '/support-tickets' && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || (![ADMIN, CLIENT_ADMIN, CLIENT_USER].includes(user.role))) return json({ error: 'Forbidden' }, 403)
+      const { title, description, severity } = await request.json()
+      if (!title?.trim() || !description?.trim()) return json({ error: 'title and description are required' }, 400)
+      const sev = ['Low', 'Medium', 'High', 'Critical'].includes(severity) ? severity : 'Medium'
+
+      const { data, error } = await sb.from('support_tickets').insert({
+        id: uuidv4(),
+        client_id: user.client_id || null,
+        created_by: user.id,
+        title: title.trim(),
+        description: description.trim(),
+        severity: sev,
+        status: 'Open',
+      }).select().single()
+      if (error) return json({ error: error.message }, 500)
+      return json({ ticket: data }, 201)
+    }
+
+    const supportMatch = route.match(/^\/support-tickets\/([^/]+)$/)
+    if (supportMatch && method === 'PATCH') {
+      const user = await getUserFromRequest(request)
+      if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
+      const ticketId = supportMatch[1]
+      const { status, resolution_note } = await request.json()
+      const allowedStatus = ['Open', 'In Progress', 'Resolved', 'Closed']
+      const update = {}
+      if (status && allowedStatus.includes(status)) update.status = status
+      if (resolution_note !== undefined) update.resolution_note = resolution_note?.trim() || null
+      if (status === 'Resolved' || status === 'Closed') update.resolved_at = new Date().toISOString()
+      update.updated_at = new Date().toISOString()
+      const { data, error } = await sb.from('support_tickets').update(update).eq('id', ticketId).select().single()
+      if (error) return json({ error: error.message }, 500)
+      return json({ ticket: data })
     }
 
     // --- PROJECTS ---
@@ -275,7 +479,13 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
       let q = sb.from('projects').select('*').order('upload_timestamp', { ascending: false })
-      if (user.role === 'Client') q = q.eq('client_id', user.client_id)
+      if (user.role === CLIENT_ADMIN) q = q.eq('client_id', user.client_id)
+      else if (user.role === CLIENT_USER) {
+        const { data: assignments } = await sb.from('user_projects').select('project_id').eq('user_id', user.id)
+        const ids = (assignments || []).map(a => a.project_id)
+        if (ids.length === 0) return json({ projects: [] })
+        q = q.in('id', ids)
+      }
       const { data: projects } = await q
       const { data: clients } = await sb.from('clients').select('*')
       const { data: users } = await sb.from('users').select('id, username')
@@ -283,7 +493,7 @@ async function handleRoute(request, context) {
       const umap = Object.fromEntries((users || []).map(u => [u.id, u]))
       const enriched = (projects || []).map(p => {
         const result = { ...p, client_name: cmap[p.client_id]?.name || 'Unknown' }
-        if (user.role !== 'Client') result.assignee_name = umap[p.assigned_to]?.username || null
+        if (!CLIENT_ROLES.includes(user.role)) result.assignee_name = umap[p.assigned_to]?.username || null
         return result
       })
       return json({ projects: enriched })
@@ -292,8 +502,9 @@ async function handleRoute(request, context) {
     if (route === '/projects' && method === 'POST') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
+      if (user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — only Super-Admin can create projects' }, 403)
       const body = await request.json()
-      const clientId = user.role === 'Client' ? user.client_id : body.client_id
+      const clientId = CLIENT_ROLES.includes(user.role) ? user.client_id : body.client_id
       if (!clientId) return json({ error: 'client_id required' }, 400)
       const title = (body.title || `Project ${new Date().toLocaleDateString()}`).trim()
       const drone_name = (body.drone_name || '').trim()
@@ -336,7 +547,7 @@ async function handleRoute(request, context) {
     if (route.startsWith('/projects/') && route.endsWith('/status') && method === 'PATCH') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
-      if (user.role === 'Client') return json({ error: 'Forbidden' }, 403)
+      if (CLIENT_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
       const id = route.split('/')[2]
       const { status } = await request.json()
       const allowed = ['Pending', 'In-Download', 'QC', 'Processing', 'Delivery', 'Failed_Refly']
@@ -347,7 +558,7 @@ async function handleRoute(request, context) {
         return json({ error: 'Card is locked. Resolve Refly with an issue note + photo first.' }, 423)
       }
       const updateFields = { status }
-      if (user.role === 'Team') updateFields.assigned_to = user.id
+      if (user.role === ADMIN) updateFields.assigned_to = user.id
       await sb.from('projects').update(updateFields).eq('id', id)
       await audit(id, user, `Status changed: ${p.status} → ${status}`)
       return json({ success: true })
@@ -356,7 +567,7 @@ async function handleRoute(request, context) {
     if (route.startsWith('/projects/') && route.endsWith('/issue-note') && method === 'POST') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
-      if (user.role === 'Client') return json({ error: 'Forbidden' }, 403)
+      if (CLIENT_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
       const id = route.split('/')[2]
       const { note, photo_data_url } = await request.json()
       if (!note || !photo_data_url) return json({ error: 'note & photo required' }, 400)
@@ -375,7 +586,7 @@ async function handleRoute(request, context) {
       const id = route.split('/')[2]
       const { data: p } = await sb.from('projects').select('*').eq('id', id).maybeSingle()
       if (!p) return json({ error: 'not found' }, 404)
-      if (user.role === 'Client' && p.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
+      if (CLIENT_ROLES.includes(user.role) && p.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
       if (p.status !== 'Delivery') return json({ error: 'project not in Delivery stage yet' }, 400)
       await sb.from('projects').update({ delivery_confirmed: true, delivery_confirmed_at: new Date().toISOString() }).eq('id', id)
       await audit(id, user, `Client confirmed delivery.`)
@@ -388,15 +599,17 @@ async function handleRoute(request, context) {
       const id = route.split('/')[2]
       const { data: p } = await sb.from('projects').select('*').eq('id', id).maybeSingle()
       if (!p) return json({ error: 'not found' }, 404)
-      if (user.role === 'Client' && p.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
+      if (CLIENT_ROLES.includes(user.role) && p.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
       const { data: logs } = await sb.from('audit_logs').select('*').eq('project_id', id).order('timestamp', { ascending: false })
-      return json({ project: p, audit_logs: user.role === 'Client' ? [] : (logs || []) })
+      // Client-User sees audit logs as Job Card logs; Client-Admin does not
+      const showLogs = !CLIENT_ROLES.includes(user.role) || user.role === CLIENT_USER
+      return json({ project: p, audit_logs: showLogs ? (logs || []) : [] })
     }
 
     // --- AUDIT ---
     if (route === '/audit-logs' && method === 'GET') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== 'Admin') return json({ error: 'Forbidden' }, 403)
+      if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
       const { data } = await sb.from('audit_logs').select('*').order('timestamp', { ascending: false }).limit(200)
       return json({ logs: data || [] })
     }
@@ -404,8 +617,10 @@ async function handleRoute(request, context) {
     // --- ANALYTICS ---
     if (route === '/analytics' && method === 'GET') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== 'Admin') return json({ error: 'Forbidden' }, 403)
+      if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
       const { data: projects } = await sb.from('projects').select('*')
+      const { data: clientProjects } = await sb.from('client_projects').select('id, client_id')
+      const { data: jobs } = await sb.from('jobs').select('id, created_at')
       const { data: clients } = await sb.from('clients').select('*')
       const { data: users } = await sb.from('users').select('id')
       const now = Date.now()
@@ -420,11 +635,301 @@ async function handleRoute(request, context) {
         else if (left < 4 * 3600000) bySla.warning++
         else bySla.ok++
       }
+
+      for (const cp of (clientProjects || [])) {
+        byClient[cp.client_id] = (byClient[cp.client_id] || 0) + 1
+      }
+
+      const monthKeys = []
+      const weekKeys = []
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date()
+        d.setMonth(d.getMonth() - i)
+        monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+      }
+      for (let i = 7; i >= 0; i--) {
+        const d = new Date()
+        d.setDate(d.getDate() - i * 7)
+        weekKeys.push(`${d.getFullYear()}-W${String(Math.ceil(d.getDate() / 7)).padStart(2, '0')}`)
+      }
+      const byMonthMap = Object.fromEntries(monthKeys.map(k => [k, 0]))
+      const byWeekMap = Object.fromEntries(weekKeys.map(k => [k, 0]))
+      for (const j of (jobs || [])) {
+        const dt = new Date(j.created_at)
+        if (Number.isNaN(dt.getTime())) continue
+        const mk = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`
+        if (mk in byMonthMap) byMonthMap[mk] += 1
+        const wk = `${dt.getFullYear()}-W${String(Math.ceil(dt.getDate() / 7)).padStart(2, '0')}`
+        if (wk in byWeekMap) byWeekMap[wk] += 1
+      }
+      const fieldJobsByMonth = monthKeys.map(key => {
+        const [y, m] = key.split('-')
+        return { key, label: `${m}/${y.slice(2)}`, count: byMonthMap[key] || 0 }
+      })
+      const fieldJobsByWeek = weekKeys.map(key => ({ key, label: key, count: byWeekMap[key] || 0 }))
+
       return json({
-        totals: { projects: (projects || []).length, clients: (clients || []).length, users: (users || []).length, refly },
+        totals: {
+          projects: (clientProjects || []).length,
+          client_workspaces: (clientProjects || []).length,
+          legacy_projects: (projects || []).length,
+          field_jobs: (jobs || []).length,
+          clients: (clients || []).length,
+          users: (users || []).length,
+          refly,
+        },
         byStatus, bySla,
+        fieldJobsByMonth,
+        fieldJobsByWeek,
         byClient: (clients || []).map(c => ({ id: c.id, name: c.name, count: byClient[c.id] || 0 })),
       })
+    }
+
+    if (route === '/jobs-assigned' && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
+
+      let q = sb.from('jobs').select('*').not('assigned_to', 'is', null).order('updated_at', { ascending: false })
+      if (user.role === ADMIN) q = q.eq('assigned_to', user.id)
+      const { data: jobs, error } = await q
+      if (error) return json({ error: error.message }, 500)
+
+      const projectIds = [...new Set((jobs || []).map(j => j.project_id))]
+      const userIds = [...new Set((jobs || []).flatMap(j => [j.assigned_to, j.created_by]).filter(Boolean))]
+      const { data: projects } = projectIds.length > 0
+        ? await sb.from('client_projects').select('id, name, type, client_id').in('id', projectIds)
+        : { data: [] }
+      const { data: clients } = projects?.length
+        ? await sb.from('clients').select('id, name').in('id', [...new Set(projects.map(p => p.client_id))])
+        : { data: [] }
+      const { data: people } = userIds.length > 0
+        ? await sb.from('users').select('id, username').in('id', userIds)
+        : { data: [] }
+      const { data: commentRows } = (jobs || []).length > 0
+        ? await sb.from('job_comments').select('*').in('job_id', jobs.map(j => j.id)).order('created_at', { ascending: false })
+        : { data: [] }
+
+      const pMap = Object.fromEntries((projects || []).map(p => [p.id, p]))
+      const cMap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
+      const uMap = Object.fromEntries((people || []).map(u => [u.id, u.username]))
+      const commentsByJob = {}
+      for (const c of (commentRows || [])) {
+        if (!commentsByJob[c.job_id]) commentsByJob[c.job_id] = []
+        commentsByJob[c.job_id].push(c)
+      }
+
+      return json({
+        jobs: (jobs || []).map(j => {
+          const p = pMap[j.project_id]
+          return {
+            ...j,
+            project_name: p?.name || null,
+            project_type: p?.type || null,
+            client_name: p?.client_id ? (cMap[p.client_id] || null) : null,
+            assigned_to_name: uMap[j.assigned_to] || null,
+            created_by_name: uMap[j.created_by] || null,
+            comments_log: commentsByJob[j.id] || [],
+          }
+        }),
+      })
+    }
+
+    // --- CLIENT PROJECTS ---
+    if (route === '/client-projects' && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      if (!user || (![...CLIENT_ROLES, ...INTERNAL_ROLES].includes(user.role))) return json({ error: 'Forbidden' }, 403)
+
+      let q = sb.from('client_projects').select('*').order('created_at', { ascending: false })
+      if (CLIENT_ROLES.includes(user.role)) q = q.eq('client_id', user.client_id)
+
+      const { data, error } = await q
+      if (error) return json({ error: error.message }, 500)
+
+      const clientIds = [...new Set((data || []).map(p => p.client_id).filter(Boolean))]
+      const { data: clients } = clientIds.length > 0
+        ? await sb.from('clients').select('id, name').in('id', clientIds)
+        : { data: [] }
+      const clientMap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
+
+      return json({ projects: (data || []).map(p => ({ ...p, client_name: clientMap[p.client_id] || null })) })
+    }
+
+    if (route === '/client-projects' && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== CLIENT_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const body = await request.json()
+      const { name, type, start_date, end_date, head } = body
+      if (!type || !start_date || !head) return json({ error: 'Project category and project admin are required' }, 400)
+      const { data, error } = await sb.from('client_projects').insert({
+        id: uuidv4(),
+        client_id: user.client_id,
+        name: (name || '').trim() || `${type} - ${head}`,
+        type,
+        start_date,
+        end_date: end_date || null,
+        head: head.trim(),
+        created_by: user.id,
+      }).select().single()
+      if (error) return json({ error: error.message }, 500)
+      return json({ project: data }, 201)
+    }
+
+    // --- JOBS ---
+    const jobsMatch = route.match(/^\/client-projects\/([^/]+)\/jobs$/)
+    if (jobsMatch) {
+      const projectId = jobsMatch[1]
+      const user = await getUserFromRequest(request)
+      if (!user || (![...CLIENT_ROLES, ...INTERNAL_ROLES].includes(user.role))) return json({ error: 'Forbidden' }, 403)
+      // verify project scope
+      let projQuery = sb.from('client_projects').select('id').eq('id', projectId)
+      if (CLIENT_ROLES.includes(user.role)) projQuery = projQuery.eq('client_id', user.client_id)
+      const { data: proj } = await projQuery.single()
+      if (!proj) return json({ error: 'Project not found' }, 404)
+
+      if (method === 'GET') {
+        const { data, error } = await sb
+          .from('jobs')
+          .select('*, assigned_user:assigned_to(username), creator:created_by(username)')
+          .eq('project_id', projectId)
+          .order('created_at', { ascending: false })
+        if (error) return json({ error: error.message }, 500)
+        const jobIds = (data || []).map(j => j.id)
+        const { data: commentRows } = jobIds.length > 0
+          ? await sb.from('job_comments').select('*').in('job_id', jobIds).order('created_at', { ascending: false })
+          : { data: [] }
+        const commentsByJob = {}
+        for (const c of (commentRows || [])) {
+          if (!commentsByJob[c.job_id]) commentsByJob[c.job_id] = []
+          commentsByJob[c.job_id].push(c)
+        }
+        const jobs = (data || []).map(j => ({
+          ...j,
+          assigned_to_name: j.assigned_user?.username || null,
+          created_by_name: j.creator?.username || null,
+          comments_log: commentsByJob[j.id] || [],
+        }))
+        return json({ jobs })
+      }
+
+      if (method === 'POST') {
+        const body = await request.json()
+        const { title, capture_date, drone_name, category, flight_count, flights, has_logs, comments, assigned_to } = body
+        if (!title?.trim()) return json({ error: 'Title required' }, 400)
+        if (!capture_date)   return json({ error: 'Capture date required' }, 400)
+        if (!drone_name?.trim()) return json({ error: 'Drone name required' }, 400)
+        const VALID_CATS = ['Stand Count', 'Uniformity']
+        if (category && !VALID_CATS.includes(category)) return json({ error: 'Invalid category' }, 400)
+        let assigneeId = null
+
+        if (CLIENT_ROLES.includes(user.role)) {
+          // Client-created jobs always auto-assign to Admins in round-robin order.
+          const rrAdmin = await nextJobAdminAssignee()
+          assigneeId = rrAdmin?.id || null
+        } else {
+          assigneeId = assigned_to || null
+        }
+
+        if (assigneeId) {
+          const { data: assignee, error: assigneeErr } = await sb.from('users').select('id').eq('id', assigneeId).eq('role', ADMIN).maybeSingle()
+          if (assigneeErr || !assignee) return json({ error: 'assigned_to must be an Admin user' }, 400)
+        }
+
+        const { data, error } = await sb.from('jobs').insert({
+          id: uuidv4(),
+          project_id: projectId,
+          title: title.trim(),
+          capture_date: capture_date,
+          drone_name: drone_name.trim(),
+          category: VALID_CATS.includes(category) ? category : 'Stand Count',
+          flight_count: flight_count || 1,
+          flights: Array.isArray(flights) ? flights : [],
+          has_logs: has_logs === true,
+          comments: comments?.trim() || null,
+          assigned_to: assigneeId,
+          status: 'Open',
+          created_by: user.id,
+        }).select().single()
+        if (error) return json({ error: error.message }, 500)
+        await addJobComment(data.id, user, 'Job card created', 'Created')
+        if (comments?.trim()) await addJobComment(data.id, user, comments.trim(), 'Created')
+        return json({ job: data }, 201)
+      }
+    }
+
+    const jobCommentMatch = route.match(/^\/client-projects\/([^/]+)\/jobs\/([^/]+)\/comments$/)
+    if (jobCommentMatch && method === 'POST') {
+      const [, projectId, jobId] = jobCommentMatch
+      const user = await getUserFromRequest(request)
+      if (!user || (![...CLIENT_ROLES, ...INTERNAL_ROLES].includes(user.role))) return json({ error: 'Forbidden' }, 403)
+      let projQuery = sb.from('client_projects').select('id').eq('id', projectId)
+      if (CLIENT_ROLES.includes(user.role)) projQuery = projQuery.eq('client_id', user.client_id)
+      const { data: proj } = await projQuery.single()
+      if (!proj) return json({ error: 'Project not found' }, 404)
+
+      const { comment, stage } = await request.json()
+      if (!comment?.trim()) return json({ error: 'comment required' }, 400)
+      await addJobComment(jobId, user, comment.trim(), stage || 'General')
+      return json({ ok: true })
+    }
+
+    const jobMatch = route.match(/^\/client-projects\/([^/]+)\/jobs\/([^/]+)$/)
+    if (jobMatch) {
+      const [, projectId, jobId] = jobMatch
+      const user = await getUserFromRequest(request)
+      if (!user || (![...CLIENT_ROLES, ...INTERNAL_ROLES].includes(user.role))) return json({ error: 'Forbidden' }, 403)
+      let projQuery = sb.from('client_projects').select('id').eq('id', projectId)
+      if (CLIENT_ROLES.includes(user.role)) projQuery = projQuery.eq('client_id', user.client_id)
+      const { data: proj } = await projQuery.single()
+      if (!proj) return json({ error: 'Project not found' }, 404)
+
+      if (method === 'PATCH') {
+        const body = await request.json()
+        const { data: currentJob } = await sb.from('jobs').select('*').eq('id', jobId).eq('project_id', projectId).maybeSingle()
+        if (!currentJob) return json({ error: 'Job not found' }, 404)
+        const allowed = {}
+        const STAGE_VALS = ['Pending', 'In Progress', 'Done', 'Blocked']
+        if (body.status && ['Open', 'In Progress', 'Done', 'Blocked'].includes(body.status)) allowed.status = body.status
+        if (body.sc_status  && STAGE_VALS.includes(body.sc_status))  allowed.sc_status  = body.sc_status
+        if (body.uni_status && STAGE_VALS.includes(body.uni_status)) allowed.uni_status = body.uni_status
+        if (body.title)                     allowed.title       = body.title.trim()
+        if (body.comments !== undefined)    allowed.comments    = body.comments?.trim() || null
+        if (body.has_logs  !== undefined)   allowed.has_logs    = body.has_logs === true
+        if (body.assigned_to !== undefined) {
+          if (![ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Only Admin can reassign jobs' }, 403)
+          if (body.assigned_to) {
+            const { data: assignee } = await sb.from('users').select('id').eq('id', body.assigned_to).eq('role', ADMIN).maybeSingle()
+            if (!assignee) return json({ error: 'assigned_to must be an Admin user' }, 400)
+            allowed.assigned_to = body.assigned_to
+          } else {
+            allowed.assigned_to = null
+          }
+        }
+        if (body.category && ['Stand Count', 'Uniformity'].includes(body.category)) allowed.category = body.category
+        const { data, error } = await sb.from('jobs').update({ ...allowed, updated_at: new Date().toISOString() }).eq('id', jobId).eq('project_id', projectId).select().single()
+        if (error) return json({ error: error.message }, 500)
+
+        if (allowed.status && allowed.status !== currentJob.status) {
+          await addJobComment(jobId, user, `Overall status changed: ${currentJob.status || 'Open'} -> ${allowed.status}`, 'Status')
+        }
+        if (allowed.sc_status && allowed.sc_status !== currentJob.sc_status) {
+          await addJobComment(jobId, user, `Stand Count stage: ${currentJob.sc_status || 'Pending'} -> ${allowed.sc_status}`, 'Stand Count')
+        }
+        if (allowed.uni_status && allowed.uni_status !== currentJob.uni_status) {
+          await addJobComment(jobId, user, `Uniformity stage: ${currentJob.uni_status || 'Pending'} -> ${allowed.uni_status}`, 'Uniformity')
+        }
+        if (body.pipeline_comment?.trim()) {
+          await addJobComment(jobId, user, body.pipeline_comment.trim(), body.pipeline_stage || 'General')
+        }
+
+        return json({ job: data })
+      }
+
+      if (method === 'DELETE') {
+        if (![CLIENT_ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
+        const { error } = await sb.from('jobs').delete().eq('id', jobId).eq('project_id', projectId)
+        if (error) return json({ error: error.message }, 500)
+        return json({ ok: true })
+      }
     }
 
     return json({ error: `Route ${route} not found` }, 404)

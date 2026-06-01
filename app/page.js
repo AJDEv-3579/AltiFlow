@@ -13,6 +13,7 @@ import {
   Plane, Plus, Radar, RefreshCw, Rocket, Search, Settings, Shield, ShieldAlert,
   Sparkles, Trash2, Upload, User, Users, X, Camera, FileCheck, Zap, ChevronLeft,
   CheckCircle2, Lock, Hash, Calendar, Box, Server, BarChart3, Bell, Sunrise, Sunset, Moon as MoonIcon, Sun as SunIcon,
+  FolderOpen, Download, Folder, FileText,
 } from 'lucide-react'
 
 // ============== API HELPER ==============
@@ -257,7 +258,7 @@ function Login({ onLogin }) {
         <GlassCard className="p-8">
           <form onSubmit={submit} className="space-y-4">
             <Field label="User ID">
-              <TextInput value={username} onChange={setUsername} placeholder="devbond01 / rohit / bayer" />
+              <TextInput value={username} onChange={setUsername} placeholder="username" />
             </Field>
             <Field label="Password">
               <TextInput value={password} onChange={setPassword} type="password" placeholder="••••••••" />
@@ -267,24 +268,6 @@ function Login({ onLogin }) {
               <ArrowRight size={16} />
             </Btn>
           </form>
-
-          <div className="mt-6 pt-6 border-t border-zinc-800">
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-3">Quick access (demo)</div>
-            <div className="grid grid-cols-1 gap-2">
-              <button type="button" onClick={() => quick('devbond01', '63pk0wpT@123')} className="text-left text-xs flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-900/50 hover:bg-zinc-800/50 border border-zinc-800">
-                <span className="flex items-center gap-2"><Shield size={14} className="text-blue-400" /> Super Admin <span className="text-zinc-500">devbond01</span></span>
-                <ChevronRight size={14} className="text-zinc-600" />
-              </button>
-              <button type="button" onClick={() => quick('Rohit', 'WelcometoAlti@123')} className="text-left text-xs flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-900/50 hover:bg-zinc-800/50 border border-zinc-800">
-                <span className="flex items-center gap-2"><Users size={14} className="text-violet-400" /> Team <span className="text-zinc-500">Rohit</span></span>
-                <ChevronRight size={14} className="text-zinc-600" />
-              </button>
-              <button type="button" onClick={() => quick('bayer', 'WelcometoAlti@123')} className="text-left text-xs flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-900/50 hover:bg-zinc-800/50 border border-zinc-800">
-                <span className="flex items-center gap-2"><Building2 size={14} className="text-emerald-400" /> Client <span className="text-zinc-500">bayer (Bayer)</span></span>
-                <ChevronRight size={14} className="text-zinc-600" />
-              </button>
-            </div>
-          </div>
         </GlassCard>
       </motion.div>
     </div>
@@ -383,7 +366,7 @@ function ProjectCard({ p, onClick, draggable = false, role }) {
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold truncate text-zinc-100">{p.title}</div>
-          {role !== 'Client' && (
+          {!['Client-Admin', 'Client-User'].includes(role) && (
             <div className="text-[11px] text-zinc-500 truncate">{p.client_name}</div>
           )}
         </div>
@@ -413,7 +396,7 @@ function ProjectCard({ p, onClick, draggable = false, role }) {
 
       <div className="flex items-center justify-between gap-2">
         <SLAClock deadline={p.sla_deadline} compact />
-        {role !== 'Client' && p.assignee_name && (
+        {!['Client-Admin', 'Client-User'].includes(role) && p.assignee_name && (
           <div className="flex items-center gap-1 text-[10px] text-zinc-500"><User size={10} />{p.assignee_name}</div>
         )}
       </div>
@@ -506,7 +489,7 @@ function ProjectDrawer({ project, onClose, role, onChanged }) {
 
   useEffect(() => {
     if (!project) return
-    if (role === 'Client') return
+    if (role === 'Client-Admin') return
     api(`/projects/${project.id}`).then(r => setLogs(r.audit_logs || [])).catch(() => {})
   }, [project, role])
 
@@ -587,7 +570,7 @@ function ProjectDrawer({ project, onClose, role, onChanged }) {
             </GlassCard>
           </div>
 
-          {role !== 'Client' && project.refly_reason && (
+          {!['Client-Admin', 'Client-User'].includes(role) && project.refly_reason && (
             <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4">
               <div className="flex items-center gap-2 text-red-300 mb-1"><ShieldAlert size={14} /> Refly Trigger</div>
               <div className="text-sm text-zinc-300">{project.refly_reason}</div>
@@ -595,7 +578,7 @@ function ProjectDrawer({ project, onClose, role, onChanged }) {
             </div>
           )}
 
-          {locked && role === 'Team' && (
+          {locked && role === 'Admin' && (
             <GlassCard className="p-4 space-y-3">
               <div className="flex items-center gap-2 text-amber-300"><FileWarning size={14} /> Resolve Refly</div>
               <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
@@ -612,7 +595,7 @@ function ProjectDrawer({ project, onClose, role, onChanged }) {
             </GlassCard>
           )}
 
-          {project.refly_resolved && project.issue_note && role !== 'Client' && (
+          {project.refly_resolved && project.issue_note && !['Client-Admin', 'Client-User'].includes(role) && (
             <GlassCard className="p-4">
               <div className="flex items-center gap-2 text-emerald-300 mb-2"><CheckCircle2 size={14} /> Refly resolved</div>
               <div className="text-sm text-zinc-300">{project.issue_note}</div>
@@ -620,16 +603,18 @@ function ProjectDrawer({ project, onClose, role, onChanged }) {
             </GlassCard>
           )}
 
-          {role === 'Client' && project.status === 'Delivery' && !project.delivery_confirmed && (
+          {['Client-Admin', 'Client-User'].includes(role) && project.status === 'Delivery' && !project.delivery_confirmed && (
             <Btn variant="success" size="lg" onClick={confirmDelivery} disabled={busy} icon={CheckCircle2}>Confirm Delivery</Btn>
           )}
-          {role === 'Client' && project.delivery_confirmed && (
+          {['Client-Admin', 'Client-User'].includes(role) && project.delivery_confirmed && (
             <div className="text-sm text-emerald-300 flex items-center gap-2"><CheckCircle2 size={14} /> Delivery confirmed</div>
           )}
 
-          {role !== 'Client' && (
+          {role !== 'Client-Admin' && (
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">Audit Trail</div>
+              <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">
+                {role === 'Client-User' ? 'Job Card Log' : 'Audit Trail'}
+              </div>
               <div className="space-y-2">
                 {logs.length === 0 && <div className="text-xs text-zinc-600">No events yet.</div>}
                 {logs.map(l => (
@@ -755,22 +740,27 @@ function Topbar({ user, onLogout, title, subtitle }) {
             <span className="text-zinc-700">·</span>
             <span className="text-zinc-500">{user.role}</span>
           </div>
-          <button onClick={onLogout} className="p-2 hover:bg-white/10 rounded-lg text-zinc-300"><LogOut size={16} /></button>
+          <Btn onClick={onLogout} variant="ghost" size="sm" icon={LogOut}>Sign out</Btn>
         </div>
       </div>
     </div>
   )
 }
 
-// ============== ADMIN APP ==============
+// ============== ADMIN APP (Super-Admin full / Admin restricted) ==============
 function AdminApp({ user, onLogout }) {
+  const isSuperAdmin = user.role === 'Super-Admin'
   const [tab, setTab] = useState('dashboard')
   const [projects, setProjects] = useState([])
+  const [clientProjects, setClientProjects] = useState([])
+  const [assignedJobs, setAssignedJobs] = useState([])
   const [clients, setClients] = useState([])
   const [users, setUsers] = useState([])
   const [logs, setLogs] = useState([])
   const [analytics, setAnalytics] = useState(null)
+  const [deletionRequests, setDeletionRequests] = useState([])
   const [active, setActive] = useState(null)
+  const [activeClientProject, setActiveClientProject] = useState(null)
 
   async function refresh() {
     try {
@@ -778,13 +768,21 @@ function AdminApp({ user, onLogout }) {
         api('/projects'), api('/clients'), api('/users'), api('/analytics'),
       ])
       setProjects(p.projects); setClients(c.clients); setUsers(u.users); setAnalytics(a)
+      const cp = await api('/client-projects')
+      setClientProjects(cp.projects || [])
+      const aj = await api('/jobs-assigned')
+      setAssignedJobs(aj.jobs || [])
       if (tab === 'audit') {
         const al = await api('/audit-logs'); setLogs(al.logs)
+      }
+      if (isSuperAdmin && tab === 'deletions') {
+        const dr = await api('/deletion-requests'); setDeletionRequests(dr.requests)
       }
     } catch (e) { toast.error(e.message) }
   }
   useEffect(() => { refresh() }, [])
   useEffect(() => { if (tab === 'audit') api('/audit-logs').then(r => setLogs(r.logs)).catch(() => {}) }, [tab])
+  useEffect(() => { if (isSuperAdmin && tab === 'deletions') api('/deletion-requests').then(r => setDeletionRequests(r.requests)).catch(() => {}) }, [tab])
 
   async function moveCard(card, target) {
     try {
@@ -794,19 +792,46 @@ function AdminApp({ user, onLogout }) {
     } catch (e) { toast.error(e.message) }
   }
 
+  const tabs = [
+    { k: 'dashboard', l: 'Dashboard', i: BarChart3 },
+    { k: 'assigned', l: 'Assigned Jobs', i: ClipboardList },
+    { k: 'pipeline', l: 'Pipeline', i: Layers },
+    { k: 'workspaces', l: 'Client Workspaces', i: FolderOpen },
+    { k: 'clients', l: 'Clients', i: Building2 },
+    { k: 'users', l: 'Users', i: Users },
+    { k: 'support', l: 'Support Tickets', i: Bell },
+    { k: 'audit', l: 'Audit Logs', i: ClipboardList },
+    ...(isSuperAdmin ? [{ k: 'deletions', l: 'Deletion Queue', i: Trash2 }] : []),
+  ]
+
+  if (activeClientProject) {
+    return (
+      <ProjectDetailPage
+        project={activeClientProject}
+        user={user}
+        orgUsers={users}
+        onBack={() => setActiveClientProject(null)}
+        onLogout={onLogout}
+        onRefresh={refresh}
+        showDashboard={true}
+        showBack={true}
+        showProjectSwitcher={true}
+        projects={clientProjects}
+        onSwitchProject={projectId => {
+          const next = clientProjects.find(p => p.id === projectId)
+          if (next) setActiveClientProject(next)
+        }}
+      />
+    )
+  }
+
   return (
     <div className="min-h-screen relative">
       <Backdrop />
-      <Topbar user={user} onLogout={onLogout} title="Command Center" subtitle="Super Admin · Global View" />
+      <Topbar user={user} onLogout={onLogout} title="Command Center" subtitle={`${user.role} · Global View`} />
       <div className="px-4 md:px-8 py-6 relative z-10">
         <div className="flex items-center gap-1 mb-6 overflow-x-auto no-scrollbar">
-          {[
-            { k: 'dashboard', l: 'Dashboard', i: BarChart3 },
-            { k: 'pipeline', l: 'Pipeline', i: Layers },
-            { k: 'clients', l: 'Clients', i: Building2 },
-            { k: 'users', l: 'Users', i: Users },
-            { k: 'audit', l: 'Audit Logs', i: ClipboardList },
-          ].map(t => (
+          {tabs.map(t => (
             <button key={t.k} onClick={() => setTab(t.k)}
               className={`px-3 h-9 text-sm rounded-lg flex items-center gap-2 ${tab === t.k ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:bg-zinc-800/50'}`}>
               <t.i size={14} />{t.l}
@@ -814,14 +839,86 @@ function AdminApp({ user, onLogout }) {
           ))}
         </div>
 
-        {tab === 'dashboard' && <AdminDashboard analytics={analytics} projects={projects} clients={clients} onClick={setActive} />}
-        {tab === 'pipeline' && <Kanban projects={projects} onMove={moveCard} onCardClick={setActive} role="Admin" />}
-        {tab === 'clients' && <ClientsTab clients={clients} onRefresh={refresh} />}
-        {tab === 'users' && <UsersTab users={users} clients={clients} onRefresh={refresh} />}
+        {tab === 'dashboard' && <AdminDashboard analytics={analytics} projects={projects} clientProjects={clientProjects} clients={clients} onClick={setActive} onOpenWorkspace={setActiveClientProject} />}
+        {tab === 'assigned' && <AssignedJobsTab jobs={assignedJobs} onOpenWorkspaceById={projectId => {
+          const next = clientProjects.find(p => p.id === projectId)
+          if (next) setActiveClientProject(next)
+        }} />}
+        {tab === 'pipeline' && <Kanban projects={projects} onMove={moveCard} onCardClick={setActive} role={user.role} />}
+        {tab === 'workspaces' && <InternalClientWorkspacesTab projects={clientProjects} onOpen={setActiveClientProject} />}
+        {tab === 'clients' && <ClientsTab clients={clients} onRefresh={refresh} isSuperAdmin={isSuperAdmin} />}
+        {tab === 'users' && <UsersTab users={users} clients={clients} onRefresh={refresh} isSuperAdmin={isSuperAdmin} />}
+        {tab === 'support' && <SupportTicketsTab user={user} />}
         {tab === 'audit' && <AuditTab logs={logs} />}
+        {tab === 'deletions' && isSuperAdmin && <DeletionQueueTab requests={deletionRequests} onRefresh={refresh} />}
       </div>
 
-      <AnimatePresence>{active && <ProjectDrawer project={active} onClose={() => setActive(null)} role="Admin" onChanged={refresh} />}</AnimatePresence>
+      <AnimatePresence>{active && <ProjectDrawer project={active} onClose={() => setActive(null)} role={user.role} onChanged={refresh} />}</AnimatePresence>
+    </div>
+  )
+}
+
+function InternalClientWorkspacesTab({ projects, onOpen }) {
+  if (!projects?.length) {
+    return (
+      <GlassCard className="p-8 text-center">
+        <div className="text-sm text-zinc-500">No client workspaces available yet.</div>
+      </GlassCard>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {projects.map(p => (
+        <button
+          key={p.id}
+          onClick={() => onOpen(p)}
+          className="w-full text-left"
+        >
+          <GlassCard className="p-4 hover:border-zinc-600 transition-colors border border-zinc-800/70">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-zinc-100 truncate">{p.name}</div>
+                <div className="text-xs text-zinc-500 mt-1">
+                  {p.client_name || 'Unknown Client'} · {p.type} · {p.head}
+                </div>
+              </div>
+              <ChevronRight size={16} className="text-zinc-600" />
+            </div>
+          </GlassCard>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function AssignedJobsTab({ jobs, onOpenWorkspaceById }) {
+  if (!jobs?.length) {
+    return (
+      <GlassCard className="p-8 text-center">
+        <div className="text-sm text-zinc-500">No assigned job cards right now.</div>
+      </GlassCard>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {jobs.map(j => (
+        <GlassCard key={j.id} className="p-4 border border-zinc-800/70">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-medium text-zinc-100 truncate">{j.title}</div>
+              <div className="text-xs text-zinc-500 mt-1">
+                {j.client_name || 'Unknown Client'} · {j.project_name || 'Unknown Project'}
+              </div>
+              <div className="text-[11px] text-zinc-600 mt-1">
+                Category: {j.category || 'Stand Count'} · SC: {j.sc_status || 'Pending'} · Uni: {j.uni_status || 'Pending'}
+              </div>
+            </div>
+            <Btn size="sm" variant="ghost" onClick={() => onOpenWorkspaceById?.(j.project_id)} icon={ChevronRight}>Open</Btn>
+          </div>
+        </GlassCard>
+      ))}
     </div>
   )
 }
@@ -843,14 +940,19 @@ function StatCard({ icon: Icon, label, value, sub, tone = 'zinc' }) {
   )
 }
 
-function AdminDashboard({ analytics, projects, clients, onClick }) {
+function AdminDashboard({ analytics, projects, clientProjects, clients, onClick, onOpenWorkspace }) {
   if (!analytics) return <div className="text-sm text-zinc-500">Loading…</div>
+  const workspaceCount = analytics.totals.client_workspaces ?? analytics.totals.projects ?? 0
+  const monthly = analytics.fieldJobsByMonth || []
+  const weekly = analytics.fieldJobsByWeek || []
+  const maxMonth = Math.max(1, ...monthly.map(x => x.count || 0))
+  const maxWeek = Math.max(1, ...weekly.map(x => x.count || 0))
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard icon={Package} label="Active Projects" value={analytics.totals.projects} tone="blue" />
+        <StatCard icon={Package} label="Client Workspaces" value={workspaceCount} tone="blue" />
         <StatCard icon={Building2} label="Clients" value={analytics.totals.clients} tone="emerald" />
-        <StatCard icon={Users} label="Users" value={analytics.totals.users} tone="violet" />
+        <StatCard icon={ClipboardList} label="Field Jobs" value={analytics.totals.field_jobs || 0} tone="violet" />
         <StatCard icon={ShieldAlert} label="Refly Flags" value={analytics.totals.refly} tone="red" />
       </div>
 
@@ -907,20 +1009,63 @@ function AdminDashboard({ analytics, projects, clients, onClick }) {
         </GlassCard>
       </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <GlassCard className="p-5">
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Monthly Field Additions</div>
+          <div className="space-y-2">
+            {monthly.map(m => (
+              <div key={m.key} className="flex items-center gap-3 text-sm">
+                <div className="w-14 text-zinc-500 text-xs">{m.label}</div>
+                <div className="flex-1 h-2 bg-zinc-900 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-500" style={{ width: `${((m.count || 0) / maxMonth) * 100}%` }} />
+                </div>
+                <div className="w-8 text-right font-mono text-xs text-zinc-400">{m.count || 0}</div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+
+        <GlassCard className="p-5">
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Weekly Field Additions</div>
+          <div className="space-y-2">
+            {weekly.map(w => (
+              <div key={w.key} className="flex items-center gap-3 text-sm">
+                <div className="w-20 text-zinc-500 text-xs truncate">{w.label}</div>
+                <div className="flex-1 h-2 bg-zinc-900 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500" style={{ width: `${((w.count || 0) / maxWeek) * 100}%` }} />
+                </div>
+                <div className="w-8 text-right font-mono text-xs text-zinc-400">{w.count || 0}</div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      </div>
+
       <GlassCard className="p-5">
         <div className="flex items-center justify-between mb-4">
-          <div className="text-xs uppercase tracking-wider text-zinc-500">Recent Activity</div>
+          <div className="text-xs uppercase tracking-wider text-zinc-500">Client Workload Distribution</div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {projects.slice(0, 6).map(p => <ProjectCard key={p.id} p={p} role="Admin" onClick={onClick} />)}
-          {projects.length === 0 && <div className="text-sm text-zinc-600">No projects yet — log in as <span className="font-mono">bayer</span> to create the first upload.</div>}
+        <div className="space-y-2">
+          {(analytics.byClient || []).slice().sort((a, b) => (b.count || 0) - (a.count || 0)).map(c => {
+            const total = (analytics.byClient || []).reduce((s, x) => s + (x.count || 0), 0) || 1
+            const pct = ((c.count || 0) / total) * 100
+            return (
+              <div key={c.id} className="flex items-center gap-3 text-sm">
+                <div className="w-40 truncate text-zinc-400">{c.name}</div>
+                <div className="flex-1 h-2 bg-zinc-900 rounded-full overflow-hidden">
+                  <div className="h-full bg-violet-500" style={{ width: `${pct}%` }} />
+                </div>
+                <div className="w-10 text-right font-mono text-xs text-zinc-400">{c.count || 0}</div>
+              </div>
+            )
+          })}
         </div>
       </GlassCard>
     </div>
   )
 }
 
-function ClientsTab({ clients, onRefresh }) {
+function ClientsTab({ clients, onRefresh, isSuperAdmin }) {
   const [name, setName] = useState(''); const [busy, setBusy] = useState(false)
   async function create() {
     if (!name.trim()) return
@@ -934,13 +1079,15 @@ function ClientsTab({ clients, onRefresh }) {
   }
   return (
     <div className="space-y-4">
-      <GlassCard className="p-5">
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Add new client</div>
-        <div className="flex gap-2">
-          <TextInput value={name} onChange={setName} placeholder="Client name (e.g., Tesla, Shell)" />
-          <Btn onClick={create} disabled={busy || !name} icon={Plus}>Create</Btn>
-        </div>
-      </GlassCard>
+      {isSuperAdmin && (
+        <GlassCard className="p-5">
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Add new client</div>
+          <div className="flex gap-2">
+            <TextInput value={name} onChange={setName} placeholder="Client name (e.g., Tesla, Shell)" />
+            <Btn onClick={create} disabled={busy || !name} icon={Plus}>Create</Btn>
+          </div>
+        </GlassCard>
+      )}
       <GlassCard className="p-5">
         <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">All clients</div>
         <div className="space-y-2">
@@ -953,7 +1100,7 @@ function ClientsTab({ clients, onRefresh }) {
                   <div className="text-[10px] font-mono text-zinc-600">{c.id.slice(0, 8)}</div>
                 </div>
               </div>
-              <button onClick={() => del(c.id)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg"><Trash2 size={14} /></button>
+              {isSuperAdmin && <button onClick={() => del(c.id)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg"><Trash2 size={14} /></button>}
             </div>
           ))}
         </div>
@@ -962,15 +1109,15 @@ function ClientsTab({ clients, onRefresh }) {
   )
 }
 
-function UsersTab({ users, clients, onRefresh }) {
-  const [form, setForm] = useState({ username: '', role: 'Team', client_id: '', password: '' })
+function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
+  const [form, setForm] = useState({ username: '', role: 'Admin', client_id: '', password: '' })
   const [busy, setBusy] = useState(false)
   async function create() {
     setBusy(true)
     try {
       const r = await api('/users', { method: 'POST', body: JSON.stringify(form) })
       toast.success(`Created ${r.user.username}. Default password: ${r.default_password}`, { duration: 6000 })
-      setForm({ username: '', role: 'Team', client_id: '', password: '' }); onRefresh()
+      setForm({ username: '', role: 'Admin', client_id: '', password: '' }); onRefresh()
     } catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
   async function del(id, username) {
@@ -979,23 +1126,25 @@ function UsersTab({ users, clients, onRefresh }) {
   }
   return (
     <div className="space-y-4">
-      <GlassCard className="p-5">
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Add user</div>
-        <div className="grid md:grid-cols-4 gap-2">
-          <TextInput value={form.username} onChange={v => setForm({ ...form, username: v })} placeholder="username" />
-          <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm">
-            <option>Admin</option><option>Team</option><option>Client</option>
-          </select>
-          {form.role === 'Client' ? (
-            <select value={form.client_id} onChange={e => setForm({ ...form, client_id: e.target.value })} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm">
-              <option value="">Pick client…</option>
-              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+      {isSuperAdmin && (
+        <GlassCard className="p-5">
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Add user</div>
+          <div className="grid md:grid-cols-4 gap-2">
+            <TextInput value={form.username} onChange={v => setForm({ ...form, username: v })} placeholder="username" />
+            <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm">
+              <option>Super-Admin</option><option>Admin</option><option>Client-Admin</option><option>Client-User</option>
             </select>
-          ) : <div />}
-          <Btn onClick={create} disabled={busy || !form.username} icon={Plus}>Create</Btn>
-        </div>
-        <div className="text-[10px] text-zinc-600 mt-2">Default password: <span className="font-mono">WelcometoAlti@123</span> · forced reset on first login.</div>
-      </GlassCard>
+            {['Client-Admin', 'Client-User'].includes(form.role) ? (
+              <select value={form.client_id} onChange={e => setForm({ ...form, client_id: e.target.value })} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm">
+                <option value="">Pick client…</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            ) : <div />}
+            <Btn onClick={create} disabled={busy || !form.username} icon={Plus}>Create</Btn>
+          </div>
+          <div className="text-[10px] text-zinc-600 mt-2">Default password: <span className="font-mono">WelcometoAlti@123</span> · forced reset on first login.</div>
+        </GlassCard>
+      )}
       <GlassCard className="p-5">
         <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">All users</div>
         <div className="space-y-2">
@@ -1011,7 +1160,7 @@ function UsersTab({ users, clients, onRefresh }) {
                   {u.client_name && <div className="text-[11px] text-zinc-500">{u.client_name}</div>}
                 </div>
               </div>
-              {u.username !== 'devbond01' && <button onClick={() => del(u.id, u.username)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg"><Trash2 size={14} /></button>}
+              {isSuperAdmin && u.username !== 'devbond01' && <button onClick={() => del(u.id, u.username)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg"><Trash2 size={14} /></button>}
             </div>
           ))}
         </div>
@@ -1040,8 +1189,46 @@ function AuditTab({ logs }) {
   )
 }
 
-// ============== TEAM APP ==============
-function TeamApp({ user, onLogout }) {
+// ============== DELETION QUEUE TAB (Super-Admin only) ==============
+function DeletionQueueTab({ requests, onRefresh }) {
+  const [busy, setBusy] = useState(null)
+  async function resolve(id, action) {
+    setBusy(id)
+    try {
+      await api(`/deletion-requests/${id}`, { method: 'PATCH', body: JSON.stringify({ action }) })
+      toast.success(action === 'approve' ? 'User deleted.' : 'Request rejected.')
+      onRefresh()
+    } catch (e) { toast.error(e.message) } finally { setBusy(null) }
+  }
+  return (
+    <GlassCard className="p-5">
+      <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Pending user deletion requests</div>
+      {requests.length === 0 && <div className="text-sm text-zinc-600">No pending requests.</div>}
+      <div className="space-y-3">
+        {requests.map(r => (
+          <div key={r.id} className="flex items-center justify-between p-3 rounded-lg border border-zinc-800/60 bg-zinc-900/40">
+            <div>
+              <div className="font-medium flex items-center gap-2">
+                <User size={14} className="text-zinc-400" />{r.target_username}
+                <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">{r.target_role}</span>
+                {r.target_client && <span className="text-[10px] text-zinc-500">{r.target_client}</span>}
+              </div>
+              <div className="text-[11px] text-zinc-500 mt-0.5">Requested by <span className="text-zinc-300">{r.requested_by_username}</span> · {new Date(r.created_at).toLocaleString()}</div>
+              {r.reason && <div className="text-xs text-zinc-400 mt-1">Reason: {r.reason}</div>}
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Btn variant="danger" size="sm" disabled={busy === r.id} onClick={() => resolve(r.id, 'approve')}>Approve</Btn>
+              <Btn variant="ghost" size="sm" disabled={busy === r.id} onClick={() => resolve(r.id, 'reject')}>Reject</Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  )
+}
+
+// ============== ADMIN PIPELINE APP (role='Admin') ==============
+function AdminPipelineApp({ user, onLogout }) {
   const [projects, setProjects] = useState([])
   const [active, setActive] = useState(null)
   async function refresh() {
@@ -1055,71 +1242,1602 @@ function TeamApp({ user, onLogout }) {
   return (
     <div className="min-h-screen relative">
       <Backdrop />
-      <Topbar user={user} onLogout={onLogout} title="Pipeline" subtitle="Team Operations · Live Kanban" />
+      <Topbar user={user} onLogout={onLogout} title="Pipeline" subtitle="Admin · Operations View" />
       <div className="px-4 md:px-8 py-6 relative z-10">
         <div className="flex items-center justify-between mb-4">
           <div className="text-sm text-zinc-400">Drag cards between stages. <span className="text-zinc-600">Refly cards are locked until resolved.</span></div>
           <Btn variant="ghost" size="sm" onClick={refresh} icon={RefreshCw}>Refresh</Btn>
         </div>
-        <Kanban projects={projects} onMove={moveCard} onCardClick={setActive} role="Team" />
+        <Kanban projects={projects} onMove={moveCard} onCardClick={setActive} role={user.role} />
       </div>
-      <AnimatePresence>{active && <ProjectDrawer project={active} onClose={() => setActive(null)} role="Team" onChanged={refresh} />}</AnimatePresence>
+      <AnimatePresence>{active && <ProjectDrawer project={active} onClose={() => setActive(null)} role={user.role} onChanged={refresh} />}</AnimatePresence>
     </div>
   )
 }
 
-// ============== CLIENT APP ==============
-function ClientApp({ user, onLogout }) {
-  const [tab, setTab] = useState('upload')
-  const [projects, setProjects] = useState([])
-  const [active, setActive] = useState(null)
-  async function refresh() { try { const r = await api('/projects'); setProjects(r.projects) } catch (e) { toast.error(e.message) } }
-  useEffect(() => { refresh() }, [])
+// ============== JOB CONSTANTS ==============
+const JOB_STATUSES = ['Open', 'In Progress', 'Done', 'Blocked']
+const JOB_STATUS_STYLES = {
+  'Open':        { bg: 'bg-blue-500/10',    text: 'text-blue-300',    border: 'border-blue-500/30' },
+  'In Progress': { bg: 'bg-amber-500/10',   text: 'text-amber-300',   border: 'border-amber-500/30' },
+  'Done':        { bg: 'bg-emerald-500/10', text: 'text-emerald-300', border: 'border-emerald-500/30' },
+  'Blocked':     { bg: 'bg-red-500/10',     text: 'text-red-300',     border: 'border-red-500/40' },
+}
+
+// ============== WELCOME SCREEN ==============
+function WelcomeScreen({ user }) {
+  const { period } = useTimeOfDay(0)
+  const meta = PERIOD_ACCENTS[period]
+  return (
+    <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
+      <Backdrop />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.6, ease: 'easeOut' }}
+        className="text-center relative z-10 px-6"
+      >
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.5 }} className="mb-6">
+          <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-blue-500 via-violet-500 to-emerald-500 flex items-center justify-center shadow-2xl"
+            style={{ boxShadow: `0 0 60px ${meta.glow}` }}>
+            <Plane className="text-white" size={36} />
+          </div>
+        </motion.div>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4, duration: 0.5 }}>
+          <div className="text-4xl font-bold tracking-tight mb-2">Welcome back,</div>
+          <div className="text-5xl font-bold mb-4" style={{ color: meta.primary }}>{user.username}</div>
+          <div className="text-zinc-400 text-lg">{user.client?.name || 'Client Portal'}</div>
+        </motion.div>
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.2, duration: 0.5 }}
+          className="mt-10 flex items-center justify-center gap-2 text-zinc-500 text-sm">
+          <RefreshCw size={14} className="animate-spin" /> Loading your workspace…
+        </motion.div>
+      </motion.div>
+    </div>
+  )
+}
+
+// ============== CREATE PROJECT MODAL ==============
+function CreateProjectModal({ user, onDone, onCancel }) {
+  const [form, setForm] = useState({
+    name: '', type: '', start_date: new Date().toISOString().slice(0, 10), end_date: '', head: user.username,
+  })
+  const [busy, setBusy] = useState(false)
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!form.type || !form.start_date || !form.head) { toast.error('Project category and project admin are required'); return }
+    setBusy(true)
+    try {
+      await api('/client-projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...form,
+          name: form.name.trim() || `${form.type} - ${form.head}`,
+          end_date: form.end_date || null,
+        }),
+      })
+      toast.success('Project created!')
+      onDone()
+    } catch (e) { toast.error(e.message) } finally { setBusy(false) }
+  }
 
   return (
-    <div className="min-h-screen relative pb-24">
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center" onClick={onCancel}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <motion.div
+        initial={{ y: '100%', opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: '100%', opacity: 0 }}
+        transition={{ type: 'spring', damping: 28 }}
+        onClick={e => e.stopPropagation()}
+        className="relative w-full max-w-lg glass-strong rounded-t-3xl md:rounded-2xl border border-zinc-800/80 overflow-y-auto max-h-[90vh]"
+      >
+        <div className="px-6 py-5 border-b border-zinc-800/60 flex items-center justify-between">
+          <div>
+            <div className="font-semibold text-lg">New Project</div>
+            <div className="text-xs text-zinc-500 mt-0.5">Create a workspace project for your team</div>
+          </div>
+          <button onClick={onCancel} className="p-2 hover:bg-zinc-800 rounded-lg"><X size={18} /></button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-4">
+          <Field label="Project Name (optional)">
+            <TextInput value={form.name} onChange={v => set('name', v)} placeholder="e.g., North Region Survey Q3" />
+          </Field>
+          <Field label="Project Category *">
+            <select value={form.type} onChange={e => set('type', e.target.value)}
+              className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600">
+              <option value="">Select category…</option>
+              <option value="Aerial Mapping">Aerial Mapping</option>
+              <option value="Photogrammetry">Photogrammetry</option>
+              <option value="LiDAR Survey">LiDAR Survey</option>
+              <option value="Inspection">Inspection</option>
+              <option value="3D Modelling">3D Modelling</option>
+              <option value="Other">Other</option>
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Start Date *">
+              <TextInput type="date" value={form.start_date} onChange={v => set('start_date', v)} />
+            </Field>
+            <Field label="End Date (optional)">
+              <TextInput type="date" value={form.end_date} onChange={v => set('end_date', v)} />
+            </Field>
+          </div>
+          <Field label="Project Admin *">
+            <TextInput value={form.head} onChange={v => set('head', v)} placeholder="Project admin name" />
+          </Field>
+          <div className="flex gap-3 pt-2">
+            <Btn type="button" variant="ghost" onClick={onCancel} className="flex-1">Cancel</Btn>
+            <Btn type="submit" disabled={busy || !form.type || !form.start_date || !form.head}
+              className="flex-1" icon={Plus}>
+              {busy ? 'Creating…' : 'Create Project'}
+            </Btn>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  )
+}
+
+// ============== PROJECTS LIST PAGE ==============
+function ProjectsListPage({ user, projects, isAdmin, onNavigate, onRefresh, onLogout }) {
+  const [showCreate, setShowCreate] = useState(false)
+  return (
+    <div className="min-h-screen relative">
       <Backdrop />
-      <Topbar user={user} onLogout={onLogout} title={user.client?.name || 'Client Portal'} subtitle="Upload · Track · Confirm" />
+      <Topbar user={user} onLogout={onLogout}
+        title={user.client?.name || 'Client Portal'}
+        subtitle="Workspace Overview" />
+      <div className="px-4 md:px-8 py-8 relative z-10">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold">Projects</h1>
+            <p className="text-zinc-500 text-sm mt-1">
+              {projects.length} project{projects.length !== 1 ? 's' : ''} · {user.client?.name}
+            </p>
+          </div>
+          {isAdmin && <Btn onClick={() => setShowCreate(true)} icon={Plus}>New Project</Btn>}
+        </div>
 
-      {/* Desktop tabs */}
-      <div className="hidden md:flex px-8 pt-6 gap-1">
-        <button onClick={() => setTab('upload')} className={`px-4 h-10 text-sm rounded-lg flex items-center gap-2 ${tab === 'upload' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:bg-zinc-800/50'}`}><Upload size={14} />New Upload</button>
-        <button onClick={() => setTab('projects')} className={`px-4 h-10 text-sm rounded-lg flex items-center gap-2 ${tab === 'projects' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:bg-zinc-800/50'}`}><Layers size={14} />My Projects ({projects.length})</button>
-      </div>
-
-      <div className="px-4 md:px-8 py-6 relative z-10">
-        {tab === 'upload' && (
-          <GlassCard className="p-6 md:p-8">
-            <div className="mb-6">
-              <div className="text-xl font-semibold">New Drone Upload</div>
-              <div className="text-sm text-zinc-500">Submit drone data — SLA will be auto-calculated based on today's volume.</div>
+        {projects.length === 0 ? (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center py-24">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-900/60 border border-zinc-800 flex items-center justify-center mb-4">
+              <FolderOpen size={28} className="text-zinc-600" />
             </div>
-            <UploadForm clientId={user.client_id} onDone={() => { refresh(); setTab('projects') }} />
-          </GlassCard>
-        )}
-        {tab === 'projects' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {projects.map(p => <ProjectCard key={p.id} p={p} onClick={setActive} role="Client" />)}
-            {projects.length === 0 && <div className="col-span-full text-sm text-zinc-500 text-center py-12">No projects yet. Hit <span className="font-mono">New Upload</span> to begin.</div>}
+            <div className="text-xl font-semibold text-zinc-300 mb-2">No projects yet</div>
+            {isAdmin ? (
+              <>
+                <div className="text-zinc-500 text-sm mb-6">Create your first project to get started</div>
+                <Btn onClick={() => setShowCreate(true)} icon={Plus}>Create Project</Btn>
+              </>
+            ) : (
+              <div className="text-zinc-500 text-sm">No projects have been shared with your workspace yet</div>
+            )}
+          </motion.div>
+        ) : (
+          <div className="space-y-3">
+            {projects.map((p, i) => (
+              <motion.div key={p.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.05 }} onClick={() => onNavigate(p)} className="group cursor-pointer">
+                <GlassCard className="p-5 hover:border-zinc-600 transition-all border border-zinc-800/80">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500/20 to-violet-500/20 border border-blue-500/20 flex items-center justify-center shrink-0">
+                        <Layers size={20} className="text-blue-300" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-zinc-100 truncate">{p.name}</div>
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                          <span className="text-xs text-zinc-500 flex items-center gap-1"><Box size={10} />{p.type}</span>
+                          <span className="text-xs text-zinc-600">·</span>
+                          <span className="text-xs text-zinc-500 flex items-center gap-1"><User size={10} />{p.head}</span>
+                          <span className="text-xs text-zinc-600">·</span>
+                          <span className="text-xs text-zinc-500 flex items-center gap-1"><Calendar size={10} />{p.start_date}</span>
+                          {p.end_date && <><span className="text-xs text-zinc-600">→</span>
+                            <span className="text-xs text-zinc-500">{p.end_date}</span></>}
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight size={18} className="text-zinc-600 group-hover:text-zinc-300 transition-colors shrink-0" />
+                  </div>
+                </GlassCard>
+              </motion.div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Mobile bottom-sheet nav */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 glass-strong border-t border-zinc-800 px-4 py-3 flex gap-2">
-        <button onClick={() => setTab('upload')} className={`flex-1 h-14 rounded-xl flex flex-col items-center justify-center fat-input ${tab === 'upload' ? 'bg-white text-zinc-900' : 'bg-zinc-900/60 text-zinc-300'}`}>
-          <Upload size={18} />
-          <div className="text-[10px] mt-0.5 font-medium">Upload</div>
-        </button>
-        <button onClick={() => setTab('projects')} className={`flex-1 h-14 rounded-xl flex flex-col items-center justify-center fat-input ${tab === 'projects' ? 'bg-white text-zinc-900' : 'bg-zinc-900/60 text-zinc-300'}`}>
-          <Layers size={18} />
-          <div className="text-[10px] mt-0.5 font-medium">Projects ({projects.length})</div>
-        </button>
-      </div>
-
-      <AnimatePresence>{active && <ProjectDrawer project={active} onClose={() => setActive(null)} role="Client" onChanged={refresh} />}</AnimatePresence>
+      <AnimatePresence>
+        {showCreate && (
+          <CreateProjectModal user={user}
+            onDone={() => { setShowCreate(false); onRefresh() }}
+            onCancel={() => setShowCreate(false)} />
+        )}
+      </AnimatePresence>
     </div>
   )
+}
+
+// ============== PROJECT DASHBOARD TAB ==============
+function ProjectDashboardTab({ project, jobs, teamMembers = [] }) {
+  const total = jobs.length
+  const standJobs    = jobs.filter(j => j.category === 'Stand Count')
+  const uniJobs      = jobs.filter(j => j.category === 'Uniformity')
+  const submitted    = total
+  const scDone       = standJobs.filter(j => j.sc_status  === 'Done').length
+  const scProgress   = standJobs.filter(j => j.sc_status  === 'In Progress').length
+  const scBlocked    = standJobs.filter(j => j.sc_status  === 'Blocked').length
+  const uniDone      = uniJobs.filter(j => j.uni_status === 'Done').length
+  const uniProgress  = uniJobs.filter(j => j.uni_status === 'In Progress').length
+  const uniBlocked   = uniJobs.filter(j => j.uni_status === 'Blocked').length
+  const fullyDone    = jobs.filter(j =>
+    (j.category === 'Stand Count' && j.sc_status === 'Done') ||
+    (j.category === 'Uniformity' && j.uni_status === 'Done')).length
+  const pending      = jobs.filter(j => {
+    const key = j.category === 'Uniformity' ? j.uni_status : j.sc_status
+    return !key || key === 'Pending'
+  }).length
+  const assignedJobs = jobs.filter(j => j.assigned_to).length
+  const assignedTeam  = teamMembers.length
+  const daysLeft    = project.end_date ? Math.ceil((new Date(project.end_date) - new Date()) / 86400000) : null
+
+  // Recent activity: sort by updated_at desc, take top 5
+  const recent = [...jobs]
+    .sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at))
+    .slice(0, 5)
+
+  function activityLabel(job) {
+    const key = job.category === 'Uniformity' ? job.uni_status : job.sc_status
+    const category = job.category || 'Stand Count'
+    if (key === 'Done') return { text: `${category} delivered`, color: 'text-emerald-400' }
+    if (key === 'Blocked') return { text: `${category} blocked`, color: 'text-red-400' }
+    if (key === 'In Progress') return { text: `${category} processing…`, color: 'text-blue-400' }
+    return { text: `${category} submitted`, color: 'text-zinc-500' }
+  }
+
+  const categoryStats = [
+    {
+      label: 'Stand Count',
+      total: standJobs.length,
+      done: scDone,
+      inProgress: scProgress,
+      blocked: scBlocked,
+      color: 'from-violet-500 to-blue-500',
+      chip: 'text-violet-300 border-violet-500/30 bg-violet-500/10',
+    },
+    {
+      label: 'Uniformity',
+      total: uniJobs.length,
+      done: uniDone,
+      inProgress: uniProgress,
+      blocked: uniBlocked,
+      color: 'from-amber-500 to-emerald-500',
+      chip: 'text-amber-300 border-amber-500/30 bg-amber-500/10',
+    },
+  ]
+
+  function timeAgo(dateStr) {
+    const diff = Date.now() - new Date(dateStr).getTime()
+    const m = Math.floor(diff / 60000)
+    if (m < 1)  return 'just now'
+    if (m < 60) return `${m}m ago`
+    const h = Math.floor(m / 60)
+    if (h < 24) return `${h}h ago`
+    return `${Math.floor(h / 24)}d ago`
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Deadline banner */}
+      {daysLeft !== null && (
+        <div className={`flex items-center justify-between px-4 py-3 rounded-xl border text-sm font-medium ${
+          daysLeft < 0  ? 'bg-red-500/10 border-red-500/30 text-red-300' :
+          daysLeft < 7  ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' :
+                          'bg-zinc-900/60 border-zinc-800 text-zinc-400'}`}>
+          <span className="flex items-center gap-2">
+            <Calendar size={14} />
+            {daysLeft < 0 ? `${Math.abs(daysLeft)} days overdue` : `${daysLeft} days until deadline`}
+          </span>
+          <span className="text-xs opacity-70">{project.end_date}</span>
+        </div>
+      )}
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        {categoryStats.map(cat => {
+          const totalCat = cat.total || 0
+          const donePct = totalCat ? Math.round((cat.done / totalCat) * 100) : 0
+          const progPct = totalCat ? Math.round((cat.inProgress / totalCat) * 100) : 0
+          const blockPct = totalCat ? Math.round((cat.blocked / totalCat) * 100) : 0
+          const pendPct = Math.max(0, 100 - donePct - progPct - blockPct)
+          return (
+            <GlassCard key={cat.label} className="p-5 border border-zinc-800/70">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <div className={`inline-flex items-center px-2 py-1 rounded-md border text-[10px] uppercase tracking-wider ${cat.chip}`}>{cat.label}</div>
+                  <div className="text-2xl font-bold text-zinc-100 mt-2">{cat.total}</div>
+                  <div className="text-[11px] text-zinc-500">submitted jobs</div>
+                </div>
+                <div className={`h-12 w-12 rounded-2xl bg-gradient-to-br ${cat.color} flex items-center justify-center shadow-lg`}>
+                  <span className="text-white font-bold text-sm">{donePct}%</span>
+                </div>
+              </div>
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>Completed</span><span className="text-zinc-300">{cat.done}</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>In progress</span><span className="text-blue-300">{cat.inProgress}</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>Blocked</span><span className="text-red-300">{cat.blocked}</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>Pending</span><span className="text-zinc-400">{totalCat - cat.done - cat.inProgress - cat.blocked}</span>
+                </div>
+              </div>
+              <div className="mt-4 h-2 rounded-full overflow-hidden bg-zinc-900 flex">
+                <div className="bg-emerald-500" style={{ width: `${donePct}%` }} />
+                <div className="bg-blue-500" style={{ width: `${progPct}%` }} />
+                <div className="bg-red-500" style={{ width: `${blockPct}%` }} />
+                <div className="bg-zinc-700" style={{ width: `${pendPct}%` }} />
+              </div>
+            </GlassCard>
+          )
+        })}
+      </div>
+
+      {/* Quick stats row */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4 text-center">
+          <div className="text-2xl font-bold text-blue-300">{pending}</div>
+          <div className="text-[10px] uppercase tracking-wider text-zinc-600 mt-1">Pending Jobs</div>
+        </div>
+        <div className="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4 text-center">
+          <div className="text-2xl font-bold text-violet-300">{assignedJobs}</div>
+          <div className="text-[10px] uppercase tracking-wider text-zinc-600 mt-1">Assigned Jobs</div>
+        </div>
+        <div className="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4 text-center">
+          <div className="text-2xl font-bold text-emerald-300">{fullyDone}</div>
+          <div className="text-[10px] uppercase tracking-wider text-zinc-600 mt-1">Fully Delivered</div>
+        </div>
+      </div>
+
+      <GlassCard className="p-5">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-zinc-500">Project Team</div>
+            <div className="text-sm text-zinc-300 mt-1">{assignedTeam} member{assignedTeam !== 1 ? 's' : ''} assigned to this project</div>
+          </div>
+          <div className="text-xs text-zinc-500">Client org members</div>
+        </div>
+        {teamMembers.length === 0 ? (
+          <div className="text-sm text-zinc-600 py-3">No team members are assigned yet.</div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {teamMembers.map(member => (
+              <div key={member.id} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500/20 to-violet-500/20 border border-zinc-700 flex items-center justify-center text-[11px] font-semibold text-zinc-200">
+                  {(member.username || '?').slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm text-zinc-100 truncate">{member.username}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-500">Project member</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+
+      {/* Recent activity feed */}
+      <GlassCard className="p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Activity size={14} className="text-zinc-500" />
+          <div className="text-xs uppercase tracking-wider text-zinc-500">Recent Activity</div>
+        </div>
+        {recent.length === 0 ? (
+          <div className="text-sm text-zinc-600 py-4 text-center">No field jobs yet.</div>
+        ) : (
+          <div className="space-y-0">
+            {recent.map((job, i) => {
+              const act = activityLabel(job)
+              return (
+                <div key={job.id}
+                  className={`flex items-center justify-between py-3 ${i < recent.length - 1 ? 'border-b border-zinc-800/50' : ''}`}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      act.color.includes('emerald') ? 'bg-emerald-500' :
+                      act.color.includes('amber')   ? 'bg-amber-500'   :
+                      act.color.includes('violet')  ? 'bg-violet-500'  :
+                      act.color.includes('blue')    ? 'bg-blue-500'    : 'bg-zinc-600'}`} />
+                    <span className="text-sm text-zinc-200 truncate">{job.title}</span>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0 ml-3">
+                    <span className={`text-xs font-medium ${act.color}`}>{act.text}</span>
+                    <span className="text-[11px] text-zinc-600">{timeAgo(job.updated_at || job.created_at)}</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </GlassCard>
+    </div>
+  )
+}
+
+// ============== JOB CARDS TAB ==============
+function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual = false }) {
+  const BLANK_FLIGHT = () => ({ image_count: null, csv_rows: null })
+  const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
+  const [form, setForm] = useState({
+    title: '', capture_date: '', drone_name: '', category: 'Stand Count',
+    flight_count: 1, flights: [BLANK_FLIGHT()],
+    has_logs: false, comments: '', assigned_to: '',
+  })
+  const [busy, setBusy] = useState(false)
+
+  function setFlightCount(n) {
+    const count = Math.max(1, Math.min(10, n))
+    setForm(f => ({
+      ...f, flight_count: count,
+      flights: Array.from({ length: count }, (_, i) => f.flights[i] || BLANK_FLIGHT()),
+    }))
+  }
+
+  const IMAGE_EXTS = /\.(jpe?g|png)$/i
+  function handleFolderSelect(e, idx) {
+    const count = Array.from(e.target.files).filter(f => IMAGE_EXTS.test(f.name)).length
+    setForm(f => {
+      const flights = [...f.flights]
+      flights[idx] = { ...flights[idx], image_count: count }
+      return { ...f, flights }
+    })
+  }
+
+  function handleCSVSelect(e, idx) {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const dataRows = Math.max(0, ev.target.result.split('\n').filter(l => l.trim()).length - 1)
+      setForm(f => {
+        const flights = [...f.flights]
+        flights[idx] = { ...flights[idx], csv_rows: dataRows }
+        return { ...f, flights }
+      })
+    }
+    reader.readAsText(file)
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!form.title.trim() || !form.capture_date || !form.drone_name.trim()) return
+    setBusy(true)
+    try {
+      await api(`/client-projects/${project.id}/jobs`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: form.title.trim(),
+          capture_date: form.capture_date,
+          drone_name: form.drone_name.trim(),
+          category: form.category,
+          flight_count: form.flight_count,
+          flights: form.flights,
+          has_logs: form.has_logs,
+          comments: form.comments.trim() || null,
+          assigned_to: canAssignManual ? (form.assigned_to || null) : null,
+        }),
+      })
+      toast.success('Field job card submitted')
+      onDone()
+    } catch (e) { toast.error(e.message) } finally { setBusy(false) }
+  }
+
+  const valid = form.title.trim() && form.capture_date && form.drone_name.trim()
+
+  return (
+    <GlassCard className="p-5">
+      <div className="flex items-center justify-between mb-5">
+        <div className="text-sm font-semibold text-zinc-200">New Field Job Card</div>
+        <button onClick={onCancel} className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-500"><X size={14} /></button>
+      </div>
+      <form onSubmit={submit} className="space-y-4">
+        {/* Row 1: Field Name + Capture Date + Category */}
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Field Name *">
+            <TextInput value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g., Block A North" />
+          </Field>
+          <Field label="Date of Capture *">
+            <input type="date" value={form.capture_date}
+              onChange={e => setForm(f => ({ ...f, capture_date: e.target.value }))}
+              className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 [color-scheme:dark]" />
+          </Field>
+          <Field label="Category *">
+            <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+              className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer">
+              <option value="Stand Count">Stand Count</option>
+              <option value="Uniformity">Uniformity</option>
+            </select>
+          </Field>
+        </div>
+
+        {/* Row 2: Drone Name + Flight Count */}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Drone Name *">
+            <TextInput value={form.drone_name} onChange={v => setForm(f => ({ ...f, drone_name: v }))} placeholder="e.g., DJI Mavic 3" />
+          </Field>
+          <Field label="No. of Flights">
+            <div className="flex items-center gap-2 h-11">
+              <button type="button" onClick={() => setFlightCount(form.flight_count - 1)}
+                className="w-10 h-10 rounded-lg bg-zinc-900/60 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 flex items-center justify-center text-lg font-bold shrink-0">−</button>
+              <div className="flex-1 h-10 bg-zinc-900/60 border border-zinc-800 rounded-lg flex items-center justify-center font-mono font-semibold text-zinc-100">
+                {form.flight_count}
+              </div>
+              <button type="button" onClick={() => setFlightCount(form.flight_count + 1)}
+                className="w-10 h-10 rounded-lg bg-zinc-900/60 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 flex items-center justify-center text-lg font-bold shrink-0">+</button>
+            </div>
+          </Field>
+        </div>
+
+        {/* Per-flight data */}
+        <div className="space-y-2">
+          <div className="text-[10px] uppercase tracking-wider text-zinc-500">Flight Data</div>
+          {form.flights.map((flight, i) => (
+            <div key={i} className="rounded-xl bg-zinc-900/40 border border-zinc-800/60 p-4 space-y-2.5">
+              <div className="text-xs font-semibold text-zinc-400">Flight {i + 1}</div>
+              {/* Image folder */}
+              <div className="flex items-center gap-2">
+                <label htmlFor={`img-${project.id}-${i}`}
+                  className="flex-1 flex items-center gap-2 h-9 px-3 rounded-lg border border-zinc-700 bg-zinc-900/60 text-xs text-zinc-400 cursor-pointer hover:border-zinc-500 hover:text-zinc-200 transition-colors">
+                  <Folder size={13} className="shrink-0" />
+                  <span className="truncate">Select Image Folder</span>
+                </label>
+                <input id={`img-${project.id}-${i}`} type="file" multiple className="sr-only"
+                  ref={el => { if (el) { el.webkitdirectory = true } }}
+                  onChange={e => handleFolderSelect(e, i)} />
+                <div className={`flex items-center gap-1.5 text-xs font-mono px-3 h-9 rounded-lg border shrink-0 min-w-[110px] justify-center ${
+                  flight.image_count !== null ? 'bg-blue-500/10 border-blue-500/30 text-blue-300' : 'bg-zinc-900/60 border-zinc-800 text-zinc-600'}`}>
+                  <Camera size={11} className="shrink-0" />
+                  {flight.image_count !== null ? `${flight.image_count.toLocaleString()} images` : '—'}
+                </div>
+              </div>
+              {/* CSV file */}
+              <div className="flex items-center gap-2">
+                <label htmlFor={`csv-${project.id}-${i}`}
+                  className="flex-1 flex items-center gap-2 h-9 px-3 rounded-lg border border-zinc-700 bg-zinc-900/60 text-xs text-zinc-400 cursor-pointer hover:border-zinc-500 hover:text-zinc-200 transition-colors">
+                  <FileText size={13} className="shrink-0" />
+                  <span className="truncate">Select CSV File</span>
+                </label>
+                <input id={`csv-${project.id}-${i}`} type="file" accept=".csv,.CSV" className="sr-only"
+                  onChange={e => handleCSVSelect(e, i)} />
+                <div className={`flex items-center gap-1.5 text-xs font-mono px-3 h-9 rounded-lg border shrink-0 min-w-[110px] justify-center ${
+                  flight.csv_rows !== null ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-zinc-900/60 border-zinc-800 text-zinc-600'}`}>
+                  <FileCheck size={11} className="shrink-0" />
+                  {flight.csv_rows !== null ? `${flight.csv_rows.toLocaleString()} rows` : '—'}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Logs checkbox */}
+        <label className="flex items-center gap-3 cursor-pointer select-none group">
+          <div onClick={() => setForm(f => ({ ...f, has_logs: !f.has_logs }))}
+            className={`w-5 h-5 rounded border flex items-center justify-center transition-colors shrink-0 ${
+              form.has_logs ? 'bg-emerald-500 border-emerald-500' : 'bg-zinc-900/60 border-zinc-700 group-hover:border-zinc-500'}`}>
+            {form.has_logs && <CheckCircle2 size={12} className="text-white" />}
+          </div>
+          <span className="text-sm text-zinc-300">Logs Available</span>
+        </label>
+
+        {/* Comments */}
+        <Field label="Comments">
+          <textarea value={form.comments} onChange={e => setForm(f => ({ ...f, comments: e.target.value }))} rows={2}
+            placeholder="Any notes about this field capture…"
+            className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none" />
+        </Field>
+
+        {/* Manual assignment for admins only. Client-created jobs are auto-assigned server-side. */}
+        {canAssignManual && adminAssignees.length > 0 && (
+          <Field label="Assign to Admin">
+            <select value={form.assigned_to} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}
+              className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600">
+              <option value="">Unassigned</option>
+              {adminAssignees.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+            </select>
+          </Field>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <Btn type="button" variant="ghost" onClick={onCancel} className="flex-1">Cancel</Btn>
+          <Btn type="submit" disabled={busy || !valid} className="flex-1" icon={Upload}>
+            {busy ? 'Submitting…' : 'Submit Job Card'}
+          </Btn>
+        </div>
+      </form>
+    </GlassCard>
+  )
+}
+
+function ProjectTeamTab({ project, orgUsers, assignedUserIds, onCreateUser, onSaveAssignments }) {
+  const [selectedIds, setSelectedIds] = useState(assignedUserIds)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setSelectedIds(assignedUserIds)
+  }, [assignedUserIds, project.id])
+
+  const teamUsers = orgUsers.filter(u => u.role === 'Client-User')
+
+  async function createUser({ username }) {
+    const created = await onCreateUser(username)
+    if (!created?.id) return
+    setSelectedIds(prev => Array.from(new Set([...prev, created.id])))
+  }
+
+  async function saveAssignments() {
+    setSaving(true)
+    try {
+      await onSaveAssignments(selectedIds)
+      toast.success('Project team updated')
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <ClientAdminUserCreate onSubmit={createUser} />
+
+      <GlassCard className="p-5">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-zinc-500">Assign to Project</div>
+            <div className="text-sm text-zinc-300 mt-1">Pick teammates from your client org and save them to this project</div>
+          </div>
+          <Btn onClick={saveAssignments} disabled={saving} icon={Users}>Save Team</Btn>
+        </div>
+
+        {teamUsers.length === 0 ? (
+          <div className="text-sm text-zinc-600 py-8 text-center">No client users in this organization yet.</div>
+        ) : (
+          <div className="grid md:grid-cols-2 gap-3">
+            {teamUsers.map(member => {
+              const checked = selectedIds.includes(member.id)
+              return (
+                <label key={member.id} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-zinc-900/60 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-colors">
+                  <div className="min-w-0">
+                    <div className="text-sm text-zinc-100 truncate">{member.username}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-zinc-500">{member.client_name || 'Client User'}</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={e => {
+                      const next = e.target.checked
+                        ? [...selectedIds, member.id]
+                        : selectedIds.filter(id => id !== member.id)
+                      setSelectedIds(next)
+                    }}
+                    className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-0"
+                  />
+                </label>
+              )
+            })}
+          </div>
+        )}
+      </GlassCard>
+    </div>
+  )
+}
+
+function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [updating, setUpdating] = useState(null)
+  const [expanded, setExpanded] = useState(null)
+  const [commentDrafts, setCommentDrafts] = useState({})
+  const [commentBusy, setCommentBusy] = useState(null)
+  const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
+
+  async function updateStage(jobId, field, value) {
+    setUpdating(jobId + field)
+    try {
+      await api(`/client-projects/${project.id}/jobs/${jobId}`, { method: 'PATCH', body: JSON.stringify({ [field]: value }) })
+      onRefresh()
+    } catch (e) { toast.error(e.message) } finally { setUpdating(null) }
+  }
+
+  async function deleteJob(jobId) {
+    if (!confirm('Delete this field job card?')) return
+    try {
+      await api(`/client-projects/${project.id}/jobs/${jobId}`, { method: 'DELETE' })
+      toast.success('Deleted')
+      onRefresh()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  async function addPipelineComment(jobId) {
+    const text = (commentDrafts[jobId] || '').trim()
+    if (!text) return
+    setCommentBusy(jobId)
+    try {
+      await api(`/client-projects/${project.id}/jobs/${jobId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ comment: text, stage: 'General' }),
+      })
+      setCommentDrafts(prev => ({ ...prev, [jobId]: '' }))
+      onRefresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setCommentBusy(null)
+    }
+  }
+
+  const stageCls = s =>
+    `h-7 rounded-lg border px-2 text-[11px] font-medium bg-transparent focus:outline-none cursor-pointer ${
+      s === 'Done'        ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' :
+      s === 'In Progress' ? 'bg-blue-500/10    text-blue-300    border-blue-500/30'    :
+      s === 'Blocked'     ? 'bg-red-500/10     text-red-300     border-red-500/30'     :
+      'bg-zinc-800/60 text-zinc-500 border-zinc-700'}`
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-zinc-400">{jobs.length} field{jobs.length !== 1 ? 's' : ''} submitted</div>
+        {!showAdd && <Btn onClick={() => setShowAdd(true)} icon={Plus} variant="primary">Add Field</Btn>}
+      </div>
+
+      <AnimatePresence>
+        {showAdd && (
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+            <AddFieldJobForm
+              project={project}
+              orgUsers={orgUsers}
+              canAssignManual={isAdmin}
+              onDone={() => { setShowAdd(false); onRefresh() }}
+              onCancel={() => setShowAdd(false)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {jobs.length === 0 && !showAdd && (
+        <div className="text-center py-16">
+          <div className="w-12 h-12 mx-auto rounded-xl bg-zinc-900/60 border border-zinc-800 flex items-center justify-center mb-3">
+            <ClipboardList size={20} className="text-zinc-600" />
+          </div>
+          <div className="text-zinc-500 text-sm">No field job cards yet.</div>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        <AnimatePresence>
+          {jobs.map(job => {
+            const isOpen = expanded === job.id
+            const flights = Array.isArray(job.flights) ? job.flights : []
+            const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
+            const totalCSV    = flights.reduce((s, f) => s + (f.csv_rows    || 0), 0)
+            return (
+              <motion.div key={job.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
+                <GlassCard className="overflow-hidden">
+                  {/* Card header — click to expand */}
+                  <button type="button" onClick={() => setExpanded(isOpen ? null : job.id)}
+                    className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      {/* Left: field info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-zinc-100">{job.title}</span>
+                          {job.category && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                              job.category === 'Uniformity'
+                                ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                                : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
+                              {job.category}
+                            </span>
+                          )}
+                          {job.has_logs && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-medium">Logs</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1.5 flex-wrap text-[11px] text-zinc-500">
+                          {job.drone_name && (
+                            <span className="flex items-center gap-1"><Plane size={10} />{job.drone_name}</span>
+                          )}
+                          {job.capture_date && (
+                            <span className="flex items-center gap-1">
+                              <Calendar size={10} />Captured {new Date(job.capture_date + 'T00:00:00').toLocaleDateString()}
+                            </span>
+                          )}
+                          <span className="flex items-center gap-1">
+                            <Clock size={10} />Uploaded {new Date(job.created_at).toLocaleDateString()}
+                          </span>
+                          {job.assigned_to_name && (
+                            <span className="flex items-center gap-1"><User size={10} />{job.assigned_to_name}</span>
+                          )}
+                        </div>
+                        {flights.length > 0 && (
+                          <div className="flex items-center gap-3 mt-1.5 text-[11px]">
+                            <span className="text-zinc-600">{flights.length} flight{flights.length !== 1 ? 's' : ''}</span>
+                            {totalImages > 0 && (
+                              <span className="text-blue-400 flex items-center gap-1">
+                                <Camera size={9} />{totalImages.toLocaleString()} images
+                              </span>
+                            )}
+                            {totalCSV > 0 && (
+                              <span className="text-emerald-400 flex items-center gap-1">
+                                <FileCheck size={9} />{totalCSV.toLocaleString()} CSV rows
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {/* Right: single status for the job's category + chevron */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {(() => {
+                          const isUni   = job.category === 'Uniformity'
+                          const stField = isUni ? 'uni_status' : 'sc_status'
+                          const stValue = (isUni ? job.uni_status : job.sc_status) || 'Pending'
+                          return (
+                            <>
+                              <span className="text-[10px] text-zinc-600">{isUni ? 'Uni' : 'SC'}</span>
+                              <select value={stValue}
+                                onClick={e => e.stopPropagation()}
+                                onChange={e => { e.stopPropagation(); updateStage(job.id, stField, e.target.value) }}
+                                disabled={updating === job.id + stField}
+                                className={stageCls(stValue)}>
+                                {['Pending','In Progress','Done','Blocked'].map(st => <option key={st} value={st}>{st}</option>)}
+                              </select>
+                            </>
+                          )
+                        })()}
+                        <ChevronDown size={14} className={`text-zinc-600 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* Expanded detail panel */}
+                  <AnimatePresence>
+                    {isOpen && (
+                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+                        <div className="border-t border-zinc-800/60 px-4 py-4 space-y-4">
+                          {/* Per-flight breakdown table */}
+                          {flights.length > 0 && (
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-2">Flight Breakdown</div>
+                              <div className="rounded-lg overflow-hidden border border-zinc-800/60">
+                                <div className="grid grid-cols-3 bg-zinc-900/60 text-[10px] uppercase tracking-wider text-zinc-600 px-3 py-2">
+                                  <span>Flight</span><span className="text-center">Images</span><span className="text-center">CSV Rows</span>
+                                </div>
+                                {flights.map((fl, i) => (
+                                  <div key={i} className="grid grid-cols-3 px-3 py-2.5 border-t border-zinc-800/40 text-sm">
+                                    <span className="text-zinc-400 text-xs">Flight {i + 1}</span>
+                                    <span className={`text-center font-mono text-xs ${fl.image_count != null ? 'text-blue-300' : 'text-zinc-600'}`}>
+                                      {fl.image_count != null ? fl.image_count.toLocaleString() : '—'}
+                                    </span>
+                                    <span className={`text-center font-mono text-xs ${fl.csv_rows != null ? 'text-emerald-300' : 'text-zinc-600'}`}>
+                                      {fl.csv_rows != null ? fl.csv_rows.toLocaleString() : '—'}
+                                    </span>
+                                  </div>
+                                ))}
+                                {flights.length > 1 && (
+                                  <div className="grid grid-cols-3 px-3 py-2.5 border-t border-zinc-700/60 bg-zinc-900/30 text-xs font-semibold">
+                                    <span className="text-zinc-500">Total</span>
+                                    <span className="text-center font-mono text-blue-300">{totalImages.toLocaleString()}</span>
+                                    <span className="text-center font-mono text-emerald-300">{totalCSV.toLocaleString()}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Comments */}
+                          {job.comments && (
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1.5">Comments</div>
+                              <div className="text-sm text-zinc-300 bg-zinc-900/40 rounded-lg px-3 py-2.5 border border-zinc-800/60 leading-relaxed">
+                                {job.comments}
+                              </div>
+                            </div>
+                          )}
+
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1.5">Pipeline Comment Timeline</div>
+                            <div className="space-y-2 max-h-44 overflow-auto pr-1">
+                              {(job.comments_log || []).length === 0 && (
+                                <div className="text-xs text-zinc-600">No stage updates yet.</div>
+                              )}
+                              {(job.comments_log || []).map(c => (
+                                <div key={c.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/30 px-3 py-2">
+                                  <div className="flex items-center justify-between gap-3 text-[10px] text-zinc-500">
+                                    <span>{c.username || 'system'} · {c.stage || 'General'}</span>
+                                    <span>{new Date(c.created_at).toLocaleString()}</span>
+                                  </div>
+                                  <div className="text-xs text-zinc-300 mt-1 whitespace-pre-wrap">{c.comment}</div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="mt-2 flex gap-2">
+                              <textarea
+                                value={commentDrafts[job.id] || ''}
+                                onChange={e => setCommentDrafts(prev => ({ ...prev, [job.id]: e.target.value }))}
+                                rows={2}
+                                placeholder="Add stage update comment..."
+                                className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none"
+                              />
+                              <Btn
+                                size="sm"
+                                onClick={() => addPipelineComment(job.id)}
+                                disabled={commentBusy === job.id || !(commentDrafts[job.id] || '').trim()}
+                              >
+                                {commentBusy === job.id ? 'Saving...' : 'Add'}
+                              </Btn>
+                            </div>
+                          </div>
+
+                          {/* Footer */}
+                          <div className="flex items-center justify-between text-[11px] text-zinc-600 pt-1 gap-3 flex-wrap">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <span>Submitted by {job.created_by_name || 'unknown'}</span>
+                              {isAdmin && adminAssignees.length > 0 && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-zinc-500">Assigned to</span>
+                                  <select
+                                    value={job.assigned_to || ''}
+                                    onChange={e => updateStage(job.id, 'assigned_to', e.target.value || null)}
+                                    disabled={updating === job.id + 'assigned_to'}
+                                    className="h-7 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2 text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-600"
+                                  >
+                                    <option value="">Unassigned</option>
+                                    {adminAssignees.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                            {isAdmin && (
+                              <button onClick={() => deleteJob(job.id)}
+                                className="flex items-center gap-1.5 text-red-400 hover:text-red-300 transition-colors">
+                                <Trash2 size={12} /> Delete
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </GlassCard>
+              </motion.div>
+            )
+          })}
+        </AnimatePresence>
+      </div>
+    </div>
+  )
+}
+
+// ============== PROJECT TRACKER TAB ==============
+const STAGE_STYLES = {
+  'Pending':     { bg: 'bg-zinc-800/60',      text: 'text-zinc-500',    border: 'border-zinc-700/60' },
+  'In Progress': { bg: 'bg-blue-500/10',      text: 'text-blue-300',    border: 'border-blue-500/30' },
+  'Done':        { bg: 'bg-emerald-500/10',   text: 'text-emerald-300', border: 'border-emerald-500/30' },
+  'Blocked':     { bg: 'bg-red-500/10',       text: 'text-red-300',     border: 'border-red-500/40' },
+}
+
+function StageChip({ status }) {
+  const s = STAGE_STYLES[status] || STAGE_STYLES['Pending']
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium border ${s.bg} ${s.text} ${s.border} whitespace-nowrap`}>
+      {status === 'Done' && <CheckCircle2 size={10} className="mr-1" />}
+      {status === 'In Progress' && <Zap size={10} className="mr-1" />}
+      {status === 'Blocked' && <AlertTriangle size={10} className="mr-1" />}
+      {status}
+    </span>
+  )
+}
+
+function ProjectTrackerTab({ project, jobs, isAdmin }) {
+  const [filter, setFilter] = useState('All')
+
+  const FILTERS = ['All', 'SC Pending', 'Uni Pending', 'Fully Done']
+
+  const filtered = jobs.filter(j => {
+    if (filter === 'SC Pending')   return j.sc_status  !== 'Done'
+    if (filter === 'Uni Pending')  return j.uni_status !== 'Done'
+    if (filter === 'Fully Done')   return j.sc_status  === 'Done' && j.uni_status === 'Done'
+    return true
+  })
+
+  function downloadCSV() {
+    const headers = ['Field Name', 'Stand Count', 'Uniformity', 'Assigned To', 'Submitted By', 'Date Submitted', 'Notes']
+    const rows = jobs.map(j => [
+      `"${(j.title || '').replace(/"/g, '""')}"`,
+      j.sc_status  || 'Pending',
+      j.uni_status || 'Pending',
+      j.assigned_to_name  || 'Unassigned',
+      j.created_by_name   || '—',
+      new Date(j.created_at).toLocaleDateString(),
+      `"${(j.description || '').replace(/"/g, '""')}"`,
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `${project.name.replace(/\s+/g, '_')}_tracker_${new Date().toISOString().slice(0,10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('Tracker downloaded')
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex gap-1 flex-wrap">
+          {FILTERS.map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`px-3 h-8 text-xs rounded-lg border transition-colors ${
+                filter === f
+                  ? 'bg-zinc-100 text-zinc-900 border-zinc-100'
+                  : 'bg-transparent text-zinc-400 border-zinc-800 hover:border-zinc-600'}`}>
+              {f}
+            </button>
+          ))}
+        </div>
+        {isAdmin && (
+          <button onClick={downloadCSV}
+            className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
+            <Download size={12} /> Export CSV
+          </button>
+        )}
+      </div>
+
+      {/* Summary chips */}
+      <div className="flex gap-2 flex-wrap text-xs">
+        <span className="px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400">{jobs.length} total fields</span>
+        <span className="px-2.5 py-1 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-300">
+          {jobs.filter(j => j.sc_status === 'Done').length} SC done
+        </span>
+        <span className="px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300">
+          {jobs.filter(j => j.uni_status === 'Done').length} Uni done
+        </span>
+        <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
+          {jobs.filter(j => j.sc_status === 'Done' && j.uni_status === 'Done').length} fully done
+        </span>
+      </div>
+
+      {/* Matrix table */}
+      {filtered.length === 0 ? (
+        <GlassCard className="p-10 text-center">
+          <div className="text-zinc-500 text-sm">No fields match this filter.</div>
+        </GlassCard>
+      ) : (
+        <GlassCard className="overflow-hidden">
+          {/* Table header */}
+          <div className="grid grid-cols-[1fr_120px_120px_120px] gap-px bg-zinc-800/40 text-[10px] uppercase tracking-wider text-zinc-500">
+            <div className="bg-zinc-950/80 px-4 py-3">Field Name</div>
+            <div className="bg-zinc-950/80 px-3 py-3 text-center">Stand Count</div>
+            <div className="bg-zinc-950/80 px-3 py-3 text-center">Uniformity</div>
+            <div className="bg-zinc-950/80 px-3 py-3 text-center">Assigned To</div>
+          </div>
+          {/* Table rows */}
+          <div className="divide-y divide-zinc-800/40">
+            {filtered.map((job, i) => (
+              <motion.div key={job.id}
+                initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.03 }}
+                className="grid grid-cols-[1fr_120px_120px_120px] gap-px bg-zinc-800/20 hover:bg-zinc-800/40 transition-colors">
+                {/* Field name */}
+                <div className="bg-zinc-950/60 px-4 py-3.5">
+                  <div className="text-sm text-zinc-100 font-medium">{job.title}</div>
+                  {job.description && (
+                    <div className="text-[11px] text-zinc-600 mt-0.5 truncate">{job.description}</div>
+                  )}
+                  <div className="text-[10px] text-zinc-700 mt-1">
+                    {new Date(job.created_at).toLocaleDateString()}
+                    {job.created_by_name && <span> · {job.created_by_name}</span>}
+                  </div>
+                </div>
+                {/* Stand Count */}
+                <div className="bg-zinc-950/60 px-3 py-3.5 flex items-center justify-center">
+                  <StageChip status={job.sc_status || 'Pending'} />
+                </div>
+                {/* Uniformity */}
+                <div className="bg-zinc-950/60 px-3 py-3.5 flex items-center justify-center">
+                  <StageChip status={job.uni_status || 'Pending'} />
+                </div>
+                {/* Assigned to */}
+                <div className="bg-zinc-950/60 px-3 py-3.5 flex items-center justify-center">
+                  {job.assigned_to_name ? (
+                    <span className="text-xs text-zinc-300 flex items-center gap-1">
+                      <User size={10} className="shrink-0" />{job.assigned_to_name}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-zinc-600">Unassigned</span>
+                  )}
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+    </div>
+  )
+}
+
+function SupportTicketsTab({ user }) {
+  const isInternal = ['Super-Admin', 'Admin'].includes(user.role)
+  const [tickets, setTickets] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState({ title: '', description: '', severity: 'Medium' })
+
+  async function loadTickets() {
+    setLoading(true)
+    try {
+      const r = await api('/support-tickets')
+      setTickets(r.tickets || [])
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadTickets() }, [])
+
+  async function submitTicket(e) {
+    e.preventDefault()
+    if (!form.title.trim() || !form.description.trim()) return
+    setBusy(true)
+    try {
+      await api('/support-tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: form.title.trim(),
+          description: form.description.trim(),
+          severity: form.severity,
+        }),
+      })
+      toast.success('Support ticket raised and sent to super admin queue')
+      setForm({ title: '', description: '', severity: 'Medium' })
+      await loadTickets()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function updateTicket(id, status) {
+    try {
+      await api(`/support-tickets/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      })
+      toast.success('Ticket updated')
+      await loadTickets()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const statusCls = s =>
+    s === 'Resolved' || s === 'Closed'
+      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+      : s === 'In Progress'
+        ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+        : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+
+  const sevCls = s =>
+    s === 'Critical'
+      ? 'bg-red-500/10 border-red-500/30 text-red-300'
+      : s === 'High'
+        ? 'bg-orange-500/10 border-orange-500/30 text-orange-300'
+        : s === 'Medium'
+          ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+          : 'bg-zinc-800/60 border-zinc-700 text-zinc-400'
+
+  return (
+    <div className="space-y-4">
+      <GlassCard className="p-5">
+        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Raise App Issue</div>
+        <form onSubmit={submitTicket} className="space-y-3">
+          <Field label="Issue Title *">
+            <TextInput value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g., Upload page freezes after CSV selection" />
+          </Field>
+          <Field label="Severity">
+            <select value={form.severity} onChange={e => setForm(f => ({ ...f, severity: e.target.value }))}
+              className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600">
+              <option>Low</option>
+              <option>Medium</option>
+              <option>High</option>
+              <option>Critical</option>
+            </select>
+          </Field>
+          <Field label="Description *">
+            <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={3}
+              placeholder="Describe steps to reproduce and what happened..."
+              className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none" />
+          </Field>
+          <div className="flex justify-end">
+            <Btn type="submit" disabled={busy || !form.title.trim() || !form.description.trim()} icon={Bell}>
+              {busy ? 'Submitting...' : 'Raise Ticket'}
+            </Btn>
+          </div>
+        </form>
+      </GlassCard>
+
+      <GlassCard className="p-5">
+        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Support Queue</div>
+        {loading ? (
+          <div className="text-sm text-zinc-500">Loading tickets...</div>
+        ) : tickets.length === 0 ? (
+          <div className="text-sm text-zinc-600">No support tickets raised yet.</div>
+        ) : (
+          <div className="space-y-3">
+            {tickets.map(t => (
+              <div key={t.id} className="rounded-xl border border-zinc-800/60 bg-zinc-900/40 p-4 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-zinc-100">{t.title}</div>
+                    <div className="text-xs text-zinc-500 mt-1">
+                      Raised by {t.created_by_name || 'Unknown'}
+                      {t.client_name && <span> · {t.client_name}</span>}
+                      <span> · {new Date(t.created_at).toLocaleString()}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border ${sevCls(t.severity)}`}>{t.severity}</span>
+                    <span className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border ${statusCls(t.status)}`}>{t.status}</span>
+                  </div>
+                </div>
+                <div className="text-sm text-zinc-300 whitespace-pre-wrap">{t.description}</div>
+                {isInternal && (
+                  <div className="pt-1 flex items-center justify-end gap-2">
+                    <select value={t.status} onChange={e => updateTicket(t.id, e.target.value)}
+                      className="h-8 bg-zinc-900/70 border border-zinc-800 rounded-lg px-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600">
+                      <option>Open</option>
+                      <option>In Progress</option>
+                      <option>Resolved</option>
+                      <option>Closed</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+    </div>
+  )
+}
+
+// ============== ISSUE TRACKER TAB ==============
+function IssueTrackerTab({ project, jobs, onRefresh }) {
+  const issues = jobs.filter(j => j.status === 'Blocked')
+
+  async function unblock(jobId) {
+    try {
+      await api(`/client-projects/${project.id}/jobs/${jobId}`, { method: 'PATCH', body: JSON.stringify({ status: 'In Progress' }) })
+      toast.success('Unblocked → In Progress')
+      onRefresh()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
+        issues.length > 0 ? 'bg-red-500/10 text-red-300 border border-red-500/30' : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'}`}>
+        {issues.length > 0 ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+        {issues.length} blocked {issues.length === 1 ? 'issue' : 'issues'}
+      </div>
+      {issues.length === 0 ? (
+        <GlassCard className="p-10 text-center">
+          <CheckCircle2 size={28} className="text-emerald-400 mx-auto mb-3" />
+          <div className="text-zinc-300 font-medium">No blocked issues</div>
+          <div className="text-zinc-600 text-sm mt-1">All jobs are flowing smoothly.</div>
+        </GlassCard>
+      ) : (
+        <div className="space-y-3">
+          {issues.map(job => (
+            <motion.div key={job.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+              <GlassCard className="p-4 border border-red-500/30">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                      <AlertTriangle size={14} className="text-red-300" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-medium text-zinc-100">{job.title}</div>
+                      {job.description && <div className="text-xs text-zinc-500 mt-1">{job.description}</div>}
+                      <div className="flex items-center gap-2 mt-2 text-[11px] text-zinc-600 flex-wrap">
+                        {job.assigned_to_name && <span><User size={10} className="inline mr-1" />{job.assigned_to_name}</span>}
+                        <span>{new Date(job.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <Btn variant="ghost" size="sm" onClick={() => unblock(job.id)}>Unblock</Btn>
+                </div>
+              </GlassCard>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============== PROJECT DETAIL PAGE ==============
+function ProjectDetailPage({
+  project,
+  user,
+  orgUsers,
+  onBack,
+  onLogout,
+  onRefresh,
+  showDashboard = true,
+  showBack = true,
+  projects = [],
+  onSwitchProject,
+  showProjectSwitcher = false,
+}) {
+  const [tab, setTab] = useState(showDashboard ? 'dashboard' : 'jobs')
+  const [jobs, setJobs] = useState([])
+  const [assignedUserIds, setAssignedUserIds] = useState([])
+  const isAdmin = user.role === 'Client-Admin'
+  const assignedUsers = orgUsers.filter(u => assignedUserIds.includes(u.id))
+
+  useEffect(() => {
+    if (!showDashboard && tab === 'dashboard') setTab('jobs')
+  }, [showDashboard, tab])
+
+  async function loadJobs() {
+    try { const r = await api(`/client-projects/${project.id}/jobs`); setJobs(r.jobs || []) }
+    catch (e) { toast.error(e.message) }
+  }
+  async function loadAssignments() {
+    try {
+      const r = await api(`/projects/${project.id}/assigned-users`)
+      setAssignedUserIds(r.user_ids || [])
+    } catch (e) { toast.error(e.message) }
+  }
+  async function saveAssignments(userIds) {
+    await api(`/projects/${project.id}/assign-users`, {
+      method: 'POST',
+      body: JSON.stringify({ user_ids: userIds }),
+    })
+    await loadAssignments()
+    await onRefresh()
+  }
+  async function createTeamUser(username) {
+    const r = await api('/users', {
+      method: 'POST',
+      body: JSON.stringify({ username, role: 'Client-User' }),
+    })
+    await onRefresh()
+    return r.user
+  }
+  useEffect(() => { loadJobs(); loadAssignments() }, [project.id])
+
+  const tabs = [
+    ...(showDashboard ? [{ k: 'dashboard', l: 'Dashboard', i: BarChart3 }] : []),
+    { k: 'jobs', l: 'Job Cards', i: ClipboardList },
+    { k: 'tracker', l: 'Project Tracker', i: Activity },
+    { k: 'issues', l: 'Issue Tracker', i: AlertTriangle },
+    { k: 'support', l: 'Support Tickets', i: Bell },
+    ...(isAdmin ? [{ k: 'team', l: 'Team', i: Users }] : []),
+  ]
+
+  return (
+    <div className="min-h-screen relative pb-24">
+      <Backdrop />
+      <div className="sticky top-0 z-30 glass-strong border-b border-zinc-800/60">
+        <div className="px-4 md:px-8 h-16 flex items-center gap-3">
+          {showBack && (
+            <button onClick={onBack} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 shrink-0">
+              <ChevronLeft size={18} />
+            </button>
+          )}
+          {showProjectSwitcher && projects.length > 1 && (
+            <div className="w-56 shrink-0">
+              <select
+                value={project.id}
+                onChange={e => onSwitchProject?.(e.target.value)}
+                className="w-full h-10 bg-zinc-900/70 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer"
+              >
+                {projects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/20 to-violet-500/20 flex items-center justify-center shrink-0">
+              <Layers size={16} className="text-blue-300" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-semibold truncate">{project.name}</div>
+              <div className="text-[11px] text-zinc-500 truncate">{project.type} · {project.head}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <PeriodChip />
+            {onLogout && <Btn onClick={onLogout} variant="ghost" size="sm" icon={LogOut}>Sign out</Btn>}
+          </div>
+        </div>
+        <div className="flex gap-1 px-4 md:px-8 pb-3 overflow-x-auto no-scrollbar">
+          {tabs.map(t => (
+            <button key={t.k} onClick={() => setTab(t.k)}
+              className={`px-3 h-9 text-sm rounded-lg flex items-center gap-2 whitespace-nowrap ${
+                tab === t.k ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:bg-zinc-800/50'}`}>
+              <t.i size={14} />{t.l}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="px-4 md:px-8 py-6 relative z-10">
+        {tab === 'dashboard' && <ProjectDashboardTab project={project} jobs={jobs} teamMembers={assignedUsers} />}
+        {tab === 'jobs' && <JobCardsTab project={project} user={user} orgUsers={orgUsers} jobs={jobs} onRefresh={loadJobs} isAdmin={isAdmin} />}
+        {tab === 'tracker' && <ProjectTrackerTab project={project} jobs={jobs} isAdmin={isAdmin} />}
+        {tab === 'issues' && <IssueTrackerTab project={project} jobs={jobs} onRefresh={loadJobs} />}
+        {tab === 'support' && <SupportTicketsTab user={user} />}
+        {tab === 'team' && isAdmin && (
+          <ProjectTeamTab
+            project={project}
+            orgUsers={orgUsers}
+            assignedUserIds={assignedUserIds}
+            onCreateUser={createTeamUser}
+            onSaveAssignments={saveAssignments}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============== CLIENT-ADMIN APP ==============
+function ClientAdminApp({ user, onLogout }) {
+  const [screen, setScreen] = useState('welcome')
+  const [projects, setProjects] = useState([])
+  const [currentProject, setCurrentProject] = useState(null)
+  const [orgUsers, setOrgUsers] = useState([])
+
+  async function loadData() {
+    try {
+      const [pr, ur] = await Promise.all([api('/client-projects'), api('/users')])
+      setProjects(pr.projects || [])
+      setOrgUsers(ur.users || [])
+    } catch (e) { toast.error(e.message) }
+  }
+
+  useEffect(() => {
+    const t = setTimeout(() => { loadData().finally(() => setScreen('projects')) }, 2500)
+    return () => clearTimeout(t)
+  }, [])
+
+  function openProject(p) { setCurrentProject(p); setScreen('project-detail') }
+  function backToProjects() { setCurrentProject(null); setScreen('projects'); loadData() }
+
+  if (screen === 'welcome') return <><WelcomeScreen user={user} /><PeriodSwitcher /></>
+  if (screen === 'project-detail' && currentProject) {
+    return (
+      <>
+        <ProjectDetailPage project={currentProject} user={user} orgUsers={orgUsers}
+          onBack={backToProjects} onRefresh={loadData} />
+        <PeriodSwitcher />
+      </>
+    )
+  }
+  return (
+    <>
+      <ProjectsListPage user={user} isAdmin projects={projects} orgUsers={orgUsers}
+        onNavigate={openProject} onRefresh={loadData} onLogout={onLogout} />
+      <PeriodSwitcher />
+    </>
+  )
+}
+
+function ClientAdminUserCreate({ onSubmit }) {
+  const [username, setUsername] = useState('')
+  const [busy, setBusy] = useState(false)
+  async function create() {
+    if (!username.trim()) return
+    setBusy(true)
+    try { await onSubmit({ username }) } finally { setBusy(false); setUsername('') }
+  }
+  return (
+    <GlassCard className="p-5">
+      <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Add team member</div>
+      <div className="flex gap-2">
+        <TextInput value={username} onChange={setUsername} placeholder="username" />
+        <Btn onClick={create} disabled={busy || !username} icon={Plus}>Create</Btn>
+      </div>
+      <div className="text-[10px] text-zinc-600 mt-2">Default password: <span className="font-mono">WelcometoAlti@123</span></div>
+    </GlassCard>
+  )
+}
+
+// ============== CLIENT APP (Client-User) ==============
+function ClientApp({ user, onLogout }) {
+  const [projects, setProjects] = useState([])
+  const [currentProject, setCurrentProject] = useState(null)
+  const [screen, setScreen] = useState('welcome')
+  const [loadingProject, setLoadingProject] = useState(false)
+
+  async function loadData() {
+    setLoadingProject(true)
+    try {
+      const r = await api('/client-projects')
+      const projects = r.projects || []
+      setProjects(projects)
+      if (projects.length > 0) {
+        setCurrentProject(prev => {
+          if (prev && projects.some(p => p.id === prev.id)) return projects.find(p => p.id === prev.id) || projects[0]
+          return projects[0]
+        })
+        setScreen('project-detail')
+      } else {
+        setCurrentProject(null)
+        setScreen('waiting')
+      }
+    } catch (e) {
+      toast.error(e.message)
+      setScreen('waiting')
+    } finally {
+      setLoadingProject(false)
+    }
+  }
+
+  useEffect(() => {
+    const t = setTimeout(() => { loadData() }, 2000)
+    return () => clearTimeout(t)
+  }, [])
+
+  if (screen === 'welcome') return <><WelcomeScreen user={user} /><PeriodSwitcher /></>
+  if (screen === 'waiting') {
+    return (
+      <>
+        <div className="min-h-screen flex items-center justify-center relative px-4">
+          <Backdrop />
+          <GlassCard className="relative z-10 p-8 max-w-md text-center">
+            <div className="text-xl font-semibold text-zinc-100 mb-2">Workspace not assigned yet</div>
+            <div className="text-sm text-zinc-500">Your project will appear here once it is assigned.</div>
+            {loadingProject && <div className="text-xs text-zinc-600 mt-3">Checking for updates…</div>}
+            <div className="mt-5 flex justify-center">
+              <Btn onClick={onLogout} variant="ghost" size="sm" icon={LogOut}>Sign out</Btn>
+            </div>
+          </GlassCard>
+        </div>
+        <PeriodSwitcher />
+      </>
+    )
+  }
+  if (screen === 'project-detail' && currentProject) {
+    return (
+      <>
+        <ProjectDetailPage project={currentProject} user={user} orgUsers={[]}
+          onBack={() => {}}
+          onLogout={onLogout}
+          onRefresh={loadData}
+          showDashboard={false}
+          showBack={false}
+          showProjectSwitcher={true}
+          projects={projects}
+          onSwitchProject={projectId => {
+            const next = projects.find(p => p.id === projectId)
+            if (next) setCurrentProject(next)
+          }} />
+        <PeriodSwitcher />
+      </>
+    )
+  }
+  return <><PeriodSwitcher /></>
 }
 
 // ============== ROOT ==============
@@ -1152,9 +2870,10 @@ function App() {
   }
   if (!user) return <><Login onLogin={setUser} /><PeriodSwitcher /></>
   if (user.must_change_password) return <><ChangePassword user={user} onDone={loadMe} /><PeriodSwitcher /></>
+  if (user.role === 'Super-Admin') return <><AdminApp user={user} onLogout={logout} /><PeriodSwitcher /></>
   if (user.role === 'Admin') return <><AdminApp user={user} onLogout={logout} /><PeriodSwitcher /></>
-  if (user.role === 'Team') return <><TeamApp user={user} onLogout={logout} /><PeriodSwitcher /></>
-  if (user.role === 'Client') return <><ClientApp user={user} onLogout={logout} /><PeriodSwitcher /></>
+  if (user.role === 'Client-Admin') return <><ClientAdminApp user={user} onLogout={logout} /><PeriodSwitcher /></>
+  if (user.role === 'Client-User') return <><ClientApp user={user} onLogout={logout} /><PeriodSwitcher /></>
   return <div>Unknown role</div>
 }
 
