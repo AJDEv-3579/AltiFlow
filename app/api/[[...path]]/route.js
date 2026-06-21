@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import crypto from 'crypto'
 import { supabaseAdmin as sb } from '@/lib/supabase'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'altiflow_dev_secret'
@@ -41,6 +42,74 @@ async function ensurePasswordResetCodesTable() {
   if (error) {
     throw new Error('password_reset_codes table missing. Run the latest supabase/schema.sql migration first.')
   }
+}
+
+const PASSKEY_ALGO = 'aes-256-gcm'
+const PASSKEY_VERSION = 1
+
+function getPasskeySecret() {
+  return crypto.createHash('sha256').update(String(JWT_SECRET)).digest()
+}
+
+function randomPasskeyExtension() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  let ext = ''
+  for (let i = 0; i < 6; i += 1) ext += chars[Math.floor(Math.random() * chars.length)]
+  return ext
+}
+
+function encryptPasskeyPayload(payload) {
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv(PASSKEY_ALGO, getPasskeySecret(), iv)
+  const plaintext = Buffer.from(JSON.stringify(payload), 'utf8')
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()])
+  const authTag = cipher.getAuthTag()
+  return `${iv.toString('hex')}.${authTag.toString('hex')}.${encrypted.toString('hex')}`
+}
+
+function decryptPasskeyPayload(content) {
+  const [ivHex, tagHex, ciphertextHex] = String(content || '').trim().split('.')
+  if (!ivHex || !tagHex || !ciphertextHex) throw new Error('Invalid passkey file format')
+  const decipher = crypto.createDecipheriv(PASSKEY_ALGO, getPasskeySecret(), Buffer.from(ivHex, 'hex'))
+  decipher.setAuthTag(Buffer.from(tagHex, 'hex'))
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(ciphertextHex, 'hex')),
+    decipher.final(),
+  ]).toString('utf8')
+  return JSON.parse(decrypted)
+}
+
+function createPasskeyFile(userId) {
+  const rawKey = crypto.randomBytes(32).toString('hex')
+  const extension = randomPasskeyExtension()
+  const payload = {
+    v: PASSKEY_VERSION,
+    uid: userId,
+    key: rawKey,
+    issued_at: new Date().toISOString(),
+  }
+  const encryptedContent = encryptPasskeyPayload(payload)
+  return {
+    rawKey,
+    extension,
+    file_name: `altiflow-passkey-${userId.slice(0, 8)}.${extension}`,
+    file_content: encryptedContent,
+  }
+}
+
+async function ensurePasskeyColumns() {
+  const { error } = await sb.from('users').select('id, passcode_key_hash').limit(1)
+  if (error) {
+    throw new Error('users.passcode_key_hash column missing. Run the latest supabase/schema.sql migration first.')
+  }
+}
+
+async function verifyUserPasskey(user, keyFileContent) {
+  if (!user?.passcode_key_hash) throw new Error('Passkey not initialized for this user')
+  const payload = decryptPasskeyPayload(keyFileContent)
+  if (payload?.uid !== user.id || !payload?.key) throw new Error('Passkey does not match this account')
+  const ok = await bcrypt.compare(String(payload.key), user.passcode_key_hash)
+  if (!ok) throw new Error('Invalid passkey')
 }
 
 // ---------- Seeding ----------
@@ -280,10 +349,39 @@ async function handleRoute(request, context) {
     if (route === '/auth/change-password' && method === 'POST') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
-      const { current_password, new_password } = await request.json()
+      await ensurePasskeyColumns()
+      const { current_password, new_password, key_file_content } = await request.json()
       if (!new_password || new_password.length < 6) return json({ error: 'New password must be 6+ chars' }, 400)
       const ok = await bcrypt.compare(current_password || '', user.password_hash)
       if (!ok) return json({ error: 'Current password incorrect' }, 401)
+
+      const needsInitialPasskey = !user.passcode_key_hash || user.must_change_password
+      if (!needsInitialPasskey) {
+        if (!key_file_content) return json({ error: 'Passkey file is required to change password' }, 400)
+        try {
+          await verifyUserPasskey(user, key_file_content)
+        } catch (e) {
+          return json({ error: e.message || 'Invalid passkey file' }, 401)
+        }
+      }
+
+      let passkeyFile = null
+      if (needsInitialPasskey) {
+        const generated = createPasskeyFile(user.id)
+        passkeyFile = {
+          file_name: generated.file_name,
+          file_content: generated.file_content,
+        }
+        await sb.from('users').update({
+          password_hash: await bcrypt.hash(new_password, 10),
+          must_change_password: false,
+          passcode_key_hash: await bcrypt.hash(generated.rawKey, 10),
+          passcode_key_ext: generated.extension,
+          passcode_key_created_at: new Date().toISOString(),
+        }).eq('id', user.id)
+        return json({ success: true, passkey_file: passkeyFile })
+      }
+
       await sb.from('users').update({
         password_hash: await bcrypt.hash(new_password, 10),
         must_change_password: false,
@@ -292,42 +390,26 @@ async function handleRoute(request, context) {
     }
 
     if (route === '/auth/forgot-password' && method === 'POST') {
-      await ensurePasswordResetCodesTable()
-      const { username, passcode, new_password } = await request.json()
-      if (!username || !passcode || !new_password) {
-        return json({ error: 'username, passcode and new_password are required' }, 400)
+      await ensurePasskeyColumns()
+      const { username, key_file_content, new_password } = await request.json()
+      if (!username || !key_file_content || !new_password) {
+        return json({ error: 'username, key_file_content and new_password are required' }, 400)
       }
       if (new_password.length < 6) return json({ error: 'New password must be 6+ chars' }, 400)
 
       const { data: user } = await sb.from('users').select('*').ilike('username', username).maybeSingle()
-      if (!user) return json({ error: 'Invalid username or passcode' }, 401)
+      if (!user) return json({ error: 'Invalid username or passkey file' }, 401)
 
-      const nowIso = new Date().toISOString()
-      const { data: codeRow } = await sb
-        .from('password_reset_codes')
-        .select('*')
-        .eq('user_id', user.id)
-        .is('consumed_at', null)
-        .gt('expires_at', nowIso)
-        .order('created_at', { ascending: false })
-        .maybeSingle()
-
-      if (!codeRow) return json({ error: 'Passcode not found or expired' }, 401)
-
-      const isValidCode = await bcrypt.compare(String(passcode), codeRow.code_hash)
-      if (!isValidCode) {
-        await sb.from('password_reset_codes').update({ attempts: (codeRow.attempts || 0) + 1 }).eq('id', codeRow.id)
-        return json({ error: 'Invalid username or passcode' }, 401)
+      try {
+        await verifyUserPasskey(user, key_file_content)
+      } catch {
+        return json({ error: 'Invalid username or passkey file' }, 401)
       }
 
       await sb.from('users').update({
         password_hash: await bcrypt.hash(new_password, 10),
         must_change_password: false,
       }).eq('id', user.id)
-
-      await sb.from('password_reset_codes').update({
-        consumed_at: new Date().toISOString(),
-      }).eq('id', codeRow.id)
 
       return json({ success: true })
     }
@@ -441,37 +523,29 @@ async function handleRoute(request, context) {
 
     if (route.match(/^\/users\/[^/]+\/reset-passcode$/) && method === 'POST') {
       const user = await getUserFromRequest(request)
-      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — only Super-Admin can generate reset passcodes' }, 403)
-      await ensurePasswordResetCodesTable()
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — only Super-Admin can generate passkey files' }, 403)
+      await ensurePasskeyColumns()
 
       const targetId = route.split('/')[2]
-      const { expires_minutes } = await request.json().catch(() => ({}))
-      const ttl = Math.max(5, Math.min(60, parseInt(expires_minutes, 10) || 15))
-
       const { data: target } = await sb.from('users').select('id, username').eq('id', targetId).maybeSingle()
       if (!target) return json({ error: 'User not found' }, 404)
 
-      const passcode = generatePasscode(6)
-      const expiresAt = new Date(Date.now() + ttl * 60000)
-
-      await sb.from('password_reset_codes').update({ consumed_at: new Date().toISOString() })
-        .eq('user_id', targetId).is('consumed_at', null)
-
-      const { error } = await sb.from('password_reset_codes').insert({
-        id: uuidv4(),
-        user_id: targetId,
-        code_hash: await bcrypt.hash(passcode, 10),
-        expires_at: expiresAt.toISOString(),
-        created_by: user.id,
-        attempts: 0,
+      const generated = createPasskeyFile(targetId)
+      const { error } = await sb.from('users').update({
+        passcode_key_hash: await bcrypt.hash(generated.rawKey, 10),
+        passcode_key_ext: generated.extension,
+        passcode_key_created_at: new Date().toISOString(),
       })
+        .eq('id', targetId)
       if (error) return json({ error: error.message }, 500)
 
       return json({
         success: true,
         username: target.username,
-        passcode,
-        expires_at: expiresAt.toISOString(),
+        passkey_file: {
+          file_name: generated.file_name,
+          file_content: generated.file_content,
+        },
       })
     }
 

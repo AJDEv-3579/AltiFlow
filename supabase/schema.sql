@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS public.users (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   username                TEXT UNIQUE NOT NULL,
   password_hash           TEXT NOT NULL,
+  passcode_key_hash       TEXT,
+  passcode_key_ext        TEXT,
+  passcode_key_created_at TIMESTAMPTZ,
   role                    TEXT NOT NULL CHECK (role IN ('Super-Admin', 'Admin', 'Client-Admin', 'Client-User')),
   client_id               UUID REFERENCES public.clients(id) ON DELETE SET NULL,
   must_change_password    BOOLEAN DEFAULT TRUE,
@@ -342,6 +345,9 @@ ALTER TABLE public.password_reset_codes ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS has_logs     BOOLEAN NOT NULL DEFAULT false;
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS comments     TEXT;
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS category     TEXT NOT NULL DEFAULT 'Stand Count' CHECK (category IN ('Stand Count', 'Uniformity'));
+-- ALTER TABLE public.users ADD COLUMN IF NOT EXISTS passcode_key_hash       TEXT;
+-- ALTER TABLE public.users ADD COLUMN IF NOT EXISTS passcode_key_ext        TEXT;
+-- ALTER TABLE public.users ADD COLUMN IF NOT EXISTS passcode_key_created_at TIMESTAMPTZ;
 -- CREATE TABLE IF NOT EXISTS public.password_reset_codes (
 --   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 --   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,

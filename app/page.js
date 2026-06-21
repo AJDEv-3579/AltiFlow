@@ -41,6 +41,23 @@ async function api(path, opts = {}) {
   return data
 }
 
+function downloadTextFile(fileName, content) {
+  const blob = new Blob([String(content || '')], { type: 'application/octet-stream' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName || 'altiflow-passkey.key'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+async function readUploadedFile(file) {
+  if (!file) return ''
+  return file.text()
+}
+
 // ============== UTIL ==============
 const STATUSES = ['Pending', 'In-Download', 'QC', 'Processing', 'Delivery']
 const STATUS_COLORS = {
@@ -207,7 +224,8 @@ function Login({ onLogin }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [forgotMode, setForgotMode] = useState(false)
-  const [passcode, setPasscode] = useState('')
+  const [passkeyFile, setPasskeyFile] = useState(null)
+  const [passkeyFileContent, setPasskeyFileContent] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [setup, setSetup] = useState(null)
@@ -233,12 +251,13 @@ function Login({ onLogin }) {
     try {
       await api('/auth/forgot-password', {
         method: 'POST',
-        body: JSON.stringify({ username, passcode, new_password: newPassword }),
+        body: JSON.stringify({ username, key_file_content: passkeyFileContent, new_password: newPassword }),
       })
       toast.success('Password reset successful. Sign in with your new password.')
       setForgotMode(false)
       setPassword(newPassword)
-      setPasscode('')
+      setPasskeyFile(null)
+      setPasskeyFileContent('')
       setNewPassword('')
     } catch (e) {
       toast.error(e.message)
@@ -305,13 +324,32 @@ function Login({ onLogin }) {
               </>
             ) : (
               <>
-                <Field label="Passcode">
-                  <TextInput value={passcode} onChange={setPasscode} placeholder="6-digit passcode" />
+                <Field label="Passkey File" hint="Upload the encrypted passkey file you saved earlier.">
+                  <input
+                    type="file"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0] || null
+                      setPasskeyFile(file)
+                      if (!file) {
+                        setPasskeyFileContent('')
+                        return
+                      }
+                      try {
+                        const text = await readUploadedFile(file)
+                        setPasskeyFileContent(text)
+                      } catch {
+                        setPasskeyFileContent('')
+                        toast.error('Unable to read passkey file')
+                      }
+                    }}
+                    className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-300 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-800 file:px-3 file:py-1.5 file:text-xs file:text-zinc-200"
+                  />
+                  {passkeyFile && <div className="text-[11px] text-zinc-500 mt-1">Selected: {passkeyFile.name}</div>}
                 </Field>
                 <Field label="New Password" hint="At least 6 characters.">
                   <TextInput value={newPassword} onChange={setNewPassword} type="password" placeholder="••••••••" />
                 </Field>
-                <Btn type="submit" disabled={busy || !username || !passcode || newPassword.length < 6} className="w-full mt-2">
+                <Btn type="submit" disabled={busy || !username || !passkeyFileContent || newPassword.length < 6} className="w-full mt-2">
                   {busy ? 'Resetting…' : 'Reset Password'}
                   <ArrowRight size={16} />
                 </Btn>
@@ -321,12 +359,13 @@ function Login({ onLogin }) {
               type="button"
               onClick={() => {
                 setForgotMode(v => !v)
-                setPasscode('')
+                setPasskeyFile(null)
+                setPasskeyFileContent('')
                 setNewPassword('')
               }}
               className="w-full text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
             >
-              {forgotMode ? 'Back to sign in' : 'Forgot password? Reset with passcode'}
+              {forgotMode ? 'Back to sign in' : 'Forgot password? Reset with passkey file'}
             </button>
           </form>
         </GlassCard>
@@ -339,14 +378,23 @@ function Login({ onLogin }) {
 function ChangePassword({ user, onDone }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
+  const [passkeyFile, setPasskeyFile] = useState(null)
+  const [passkeyFileContent, setPasskeyFileContent] = useState('')
   const [busy, setBusy] = useState(false)
 
   async function submit(e) {
     e.preventDefault()
     setBusy(true)
     try {
-      await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password: current, new_password: next }) })
-      toast.success('Password updated.')
+      const payload = { current_password: current, new_password: next }
+      if (!user.must_change_password) payload.key_file_content = passkeyFileContent
+      const r = await api('/auth/change-password', { method: 'POST', body: JSON.stringify(payload) })
+      if (r.passkey_file?.file_content) {
+        downloadTextFile(r.passkey_file.file_name, r.passkey_file.file_content)
+        toast.success('Password updated. Your passkey file has been downloaded. Store it safely.', { duration: 9000 })
+      } else {
+        toast.success('Password updated.')
+      }
       onDone()
     } catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
@@ -372,7 +420,31 @@ function ChangePassword({ user, onDone }) {
             <Field label="New password" hint="At least 6 characters.">
               <TextInput value={next} onChange={setNext} type="password" placeholder="••••••••" />
             </Field>
-            <Btn type="submit" disabled={busy} className="w-full">{busy ? 'Updating…' : 'Update password'}</Btn>
+            {!user.must_change_password && (
+              <Field label="Passkey file" hint="Required for password changes after first-time setup.">
+                <input
+                  type="file"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0] || null
+                    setPasskeyFile(file)
+                    if (!file) {
+                      setPasskeyFileContent('')
+                      return
+                    }
+                    try {
+                      const text = await readUploadedFile(file)
+                      setPasskeyFileContent(text)
+                    } catch {
+                      setPasskeyFileContent('')
+                      toast.error('Unable to read passkey file')
+                    }
+                  }}
+                  className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-300 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-800 file:px-3 file:py-1.5 file:text-xs file:text-zinc-200"
+                />
+                {passkeyFile && <div className="text-[11px] text-zinc-500 mt-1">Selected: {passkeyFile.name}</div>}
+              </Field>
+            )}
+            <Btn type="submit" disabled={busy || (!user.must_change_password && !passkeyFileContent)} className="w-full">{busy ? 'Updating…' : 'Update password'}</Btn>
           </form>
         </GlassCard>
       </motion.div>
@@ -1500,18 +1572,15 @@ function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
   }
 
   async function generatePasscode(id, username) {
-    const input = window.prompt(`Passcode expiry (minutes) for ${username}:`, '15')
-    if (input === null) return
-    const minutes = Math.max(5, Math.min(60, parseInt(input, 10) || 15))
     try {
       const r = await api(`/users/${id}/reset-passcode`, {
         method: 'POST',
-        body: JSON.stringify({ expires_minutes: minutes }),
+        body: JSON.stringify({}),
       })
-      if (navigator?.clipboard?.writeText) {
-        navigator.clipboard.writeText(r.passcode).catch(() => {})
+      if (r.passkey_file?.file_content) {
+        downloadTextFile(r.passkey_file.file_name, r.passkey_file.file_content)
       }
-      toast.success(`Passcode for ${r.username}: ${r.passcode} (expires ${new Date(r.expires_at).toLocaleTimeString()})`, { duration: 10000 })
+      toast.success(`Passkey file regenerated for ${r.username}. Share the downloaded file securely.`, { duration: 9000 })
     } catch (e) { toast.error(e.message) }
   }
   return (
@@ -1553,7 +1622,7 @@ function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
               {isSuperAdmin && u.username !== 'devbond01' && (
                 <div className="flex items-center gap-2">
                   <Btn size="sm" variant="ghost" onClick={() => generatePasscode(u.id, u.username)}>
-                    Passcode
+                    Key File
                   </Btn>
                   <Btn size="sm" variant="ghost" onClick={() => resetPassword(u.id, u.username)}>
                     Reset Pwd
