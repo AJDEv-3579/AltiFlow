@@ -352,6 +352,46 @@ ALTER TABLE public.password_reset_codes ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE public.users ADD COLUMN IF NOT EXISTS passcode_key_hash       TEXT;
 -- ALTER TABLE public.users ADD COLUMN IF NOT EXISTS passcode_key_ext        TEXT;
 -- ALTER TABLE public.users ADD COLUMN IF NOT EXISTS passcode_key_created_at TIMESTAMPTZ;
+-- ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS sla_deadline TIMESTAMPTZ;
+-- ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS sla_hours INT;
+-- ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS sla_daily_count INT;
+--
+-- One-time SLA backfill for existing projects (run once):
+-- 24h for daily uploads #1-2, 48h for #3-4, 72h for #5+
+--
+-- WITH ranked AS (
+--   SELECT
+--     id,
+--     upload_timestamp,
+--     ROW_NUMBER() OVER (
+--       PARTITION BY client_id, DATE(upload_timestamp)
+--       ORDER BY upload_timestamp ASC, id ASC
+--     ) AS daily_rank
+--   FROM public.projects
+-- ),
+-- computed AS (
+--   SELECT
+--     id,
+--     daily_rank,
+--     CASE
+--       WHEN daily_rank BETWEEN 3 AND 4 THEN 48
+--       WHEN daily_rank > 4 THEN 72
+--       ELSE 24
+--     END AS sla_hours_calc,
+--     (upload_timestamp + (CASE
+--       WHEN daily_rank BETWEEN 3 AND 4 THEN INTERVAL '48 hours'
+--       WHEN daily_rank > 4 THEN INTERVAL '72 hours'
+--       ELSE INTERVAL '24 hours'
+--     END)) AS sla_deadline_calc
+--   FROM ranked
+-- )
+-- UPDATE public.projects p
+-- SET
+--   sla_daily_count = c.daily_rank,
+--   sla_hours = c.sla_hours_calc,
+--   sla_deadline = c.sla_deadline_calc
+-- FROM computed c
+-- WHERE p.id = c.id;
 -- CREATE TABLE IF NOT EXISTS public.password_reset_codes (
 --   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 --   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
