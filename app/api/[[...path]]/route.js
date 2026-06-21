@@ -30,6 +30,19 @@ const CLIENT_USER  = 'Client-User'
 const INTERNAL_ROLES = [SUPER_ADMIN, ADMIN]
 const CLIENT_ROLES   = [CLIENT_ADMIN, CLIENT_USER]
 
+function generatePasscode(length = 6) {
+  const min = 10 ** (length - 1)
+  const max = (10 ** length) - 1
+  return String(Math.floor(min + Math.random() * (max - min + 1)))
+}
+
+async function ensurePasswordResetCodesTable() {
+  const { error } = await sb.from('password_reset_codes').select('id').limit(1)
+  if (error) {
+    throw new Error('password_reset_codes table missing. Run the latest supabase/schema.sql migration first.')
+  }
+}
+
 // ---------- Seeding ----------
 // Only seeds the one Super-Admin account.
 // All other users must be created manually via the Super-Admin panel.
@@ -278,6 +291,47 @@ async function handleRoute(request, context) {
       return json({ success: true })
     }
 
+    if (route === '/auth/forgot-password' && method === 'POST') {
+      await ensurePasswordResetCodesTable()
+      const { username, passcode, new_password } = await request.json()
+      if (!username || !passcode || !new_password) {
+        return json({ error: 'username, passcode and new_password are required' }, 400)
+      }
+      if (new_password.length < 6) return json({ error: 'New password must be 6+ chars' }, 400)
+
+      const { data: user } = await sb.from('users').select('*').ilike('username', username).maybeSingle()
+      if (!user) return json({ error: 'Invalid username or passcode' }, 401)
+
+      const nowIso = new Date().toISOString()
+      const { data: codeRow } = await sb
+        .from('password_reset_codes')
+        .select('*')
+        .eq('user_id', user.id)
+        .is('consumed_at', null)
+        .gt('expires_at', nowIso)
+        .order('created_at', { ascending: false })
+        .maybeSingle()
+
+      if (!codeRow) return json({ error: 'Passcode not found or expired' }, 401)
+
+      const isValidCode = await bcrypt.compare(String(passcode), codeRow.code_hash)
+      if (!isValidCode) {
+        await sb.from('password_reset_codes').update({ attempts: (codeRow.attempts || 0) + 1 }).eq('id', codeRow.id)
+        return json({ error: 'Invalid username or passcode' }, 401)
+      }
+
+      await sb.from('users').update({
+        password_hash: await bcrypt.hash(new_password, 10),
+        must_change_password: false,
+      }).eq('id', user.id)
+
+      await sb.from('password_reset_codes').update({
+        consumed_at: new Date().toISOString(),
+      }).eq('id', codeRow.id)
+
+      return json({ success: true })
+    }
+
     // --- CLIENTS ---
     if (route === '/clients' && method === 'GET') {
       const user = await getUserFromRequest(request)
@@ -362,6 +416,63 @@ async function handleRoute(request, context) {
       if (target?.username === 'devbond01') return json({ error: 'Cannot delete Super-Admin' }, 400)
       await moveToRecycleBin({ tableName: 'users', entityType: 'user', id, user })
       return json({ success: true })
+    }
+
+    if (route.match(/^\/users\/[^/]+\/reset-password$/) && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — only Super-Admin can reset passwords' }, 403)
+
+      const targetId = route.split('/')[2]
+      const { new_password } = await request.json().catch(() => ({}))
+      const password = (new_password || DEFAULT_TEAM_PWD).trim()
+      if (password.length < 6) return json({ error: 'Password must be 6+ chars' }, 400)
+
+      const { data: target } = await sb.from('users').select('id, username').eq('id', targetId).maybeSingle()
+      if (!target) return json({ error: 'User not found' }, 404)
+      if (target.username === 'devbond01') return json({ error: 'Cannot reset Super-Admin root account through this action' }, 400)
+
+      await sb.from('users').update({
+        password_hash: await bcrypt.hash(password, 10),
+        must_change_password: true,
+      }).eq('id', targetId)
+
+      return json({ success: true, username: target.username, temporary_password: password })
+    }
+
+    if (route.match(/^\/users\/[^/]+\/reset-passcode$/) && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — only Super-Admin can generate reset passcodes' }, 403)
+      await ensurePasswordResetCodesTable()
+
+      const targetId = route.split('/')[2]
+      const { expires_minutes } = await request.json().catch(() => ({}))
+      const ttl = Math.max(5, Math.min(60, parseInt(expires_minutes, 10) || 15))
+
+      const { data: target } = await sb.from('users').select('id, username').eq('id', targetId).maybeSingle()
+      if (!target) return json({ error: 'User not found' }, 404)
+
+      const passcode = generatePasscode(6)
+      const expiresAt = new Date(Date.now() + ttl * 60000)
+
+      await sb.from('password_reset_codes').update({ consumed_at: new Date().toISOString() })
+        .eq('user_id', targetId).is('consumed_at', null)
+
+      const { error } = await sb.from('password_reset_codes').insert({
+        id: uuidv4(),
+        user_id: targetId,
+        code_hash: await bcrypt.hash(passcode, 10),
+        expires_at: expiresAt.toISOString(),
+        created_by: user.id,
+        attempts: 0,
+      })
+      if (error) return json({ error: error.message }, 500)
+
+      return json({
+        success: true,
+        username: target.username,
+        passcode,
+        expires_at: expiresAt.toISOString(),
+      })
     }
 
     // Client-Admin requests deletion of a Client-User
@@ -670,6 +781,7 @@ async function handleRoute(request, context) {
       if (!user) return json({ error: 'Unauthorized' }, 401)
       let q = sb.from('projects').select('*').order('upload_timestamp', { ascending: false })
       if (user.role === CLIENT_ADMIN) q = q.eq('client_id', user.client_id)
+      else if (user.role === ADMIN) q = q.eq('assigned_to', user.id)
       else if (user.role === CLIENT_USER) {
         const { data: assignments } = await sb.from('user_projects').select('project_id').eq('user_id', user.id)
         const ids = (assignments || []).map(a => a.project_id)
@@ -716,6 +828,9 @@ async function handleRoute(request, context) {
         const assignee = await nextReflyAssignee()
         if (assignee) assigned_to = assignee.id
         refly_reason = `Image-CSV mismatch (${image_count - csv_count}) without Base/Rover correction.`
+      } else {
+        const adminAssignee = await nextJobAdminAssignee()
+        if (adminAssignee) assigned_to = adminAssignee.id
       }
       const project = {
         id: uuidv4(), client_id: clientId, title, drone_name, capture_date,
@@ -730,6 +845,9 @@ async function handleRoute(request, context) {
       if (status === 'Failed_Refly' && assigned_to) {
         const { data: assignee } = await sb.from('users').select('username').eq('id', assigned_to).maybeSingle()
         await audit(project.id, user, `Auto-flagged as Failed_Refly and assigned (round-robin) to ${assignee?.username}.`)
+      } else if (assigned_to) {
+        const { data: assignee } = await sb.from('users').select('username').eq('id', assigned_to).maybeSingle()
+        await audit(project.id, user, `Assigned to ${assignee?.username} via round-robin.`)
       }
       return json({ project: data })
     }
@@ -886,9 +1004,9 @@ async function handleRoute(request, context) {
 
     if (route === '/jobs-assigned' && method === 'GET') {
       const user = await getUserFromRequest(request)
-      if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
+      if (!user || ![ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
 
-      let q = sb.from('jobs').select('*').not('assigned_to', 'is', null).order('updated_at', { ascending: false })
+      let q = sb.from('jobs').select('*').order('updated_at', { ascending: false })
       if (user.role === ADMIN) q = q.eq('assigned_to', user.id)
       const { data: jobs, error } = await q
       if (error) return json({ error: error.message }, 500)
@@ -920,8 +1038,13 @@ async function handleRoute(request, context) {
       return json({
         jobs: (jobs || []).map(j => {
           const p = pMap[j.project_id]
+          const legacyStage = j.status === 'Blocked'
+            ? 'Cancelled'
+            : ((j.status === 'In Progress' || j.status === 'Done') ? j.status : 'Pending')
           return {
             ...j,
+            sc_status: j.sc_status || legacyStage,
+            uni_status: j.uni_status || legacyStage,
             project_name: p?.name || null,
             project_type: p?.type || null,
             client_name: p?.client_id ? (cMap[p.client_id] || null) : null,
@@ -1062,6 +1185,8 @@ async function handleRoute(request, context) {
         }
         const jobs = (data || []).map(j => ({
           ...j,
+          sc_status: j.sc_status || (j.status === 'Blocked' ? 'Cancelled' : (j.status === 'Open' ? 'Pending' : j.status)),
+          uni_status: j.uni_status || (j.status === 'Blocked' ? 'Cancelled' : (j.status === 'Open' ? 'Pending' : j.status)),
           assigned_to_name: j.assigned_user?.username || null,
           created_by_name: j.creator?.username || null,
           comments_log: commentsByJob[j.id] || [],
@@ -1089,7 +1214,12 @@ async function handleRoute(request, context) {
           const rrAdmin = await nextJobAdminAssignee()
           assigneeId = rrAdmin?.id || null
         } else {
-          assigneeId = assigned_to || null
+          if (assigned_to) {
+            assigneeId = assigned_to
+          } else {
+            const rrAdmin = await nextJobAdminAssignee()
+            assigneeId = rrAdmin?.id || null
+          }
         }
 
         if (assigneeId) {
@@ -1150,10 +1280,24 @@ async function handleRoute(request, context) {
         const { data: currentJob } = await sb.from('jobs').select('*').eq('id', jobId).eq('project_id', projectId).maybeSingle()
         if (!currentJob) return json({ error: 'Job not found' }, 404)
         const allowed = {}
-        const STAGE_VALS = ['Pending', 'In Progress', 'Done', 'Blocked']
+        const STAGE_VALS = ['Pending', 'In Progress', 'Done', 'Blocked', 'Cancelled']
+        const hasScStatus = Object.prototype.hasOwnProperty.call(currentJob, 'sc_status')
+        const hasUniStatus = Object.prototype.hasOwnProperty.call(currentJob, 'uni_status')
+        const toDbStage = (stage) => (stage === 'Cancelled' ? 'Blocked' : stage)
+        const statusFromStage = (stage) => {
+          if (stage === 'Pending') return 'Open'
+          if (stage === 'Cancelled') return 'Blocked'
+          return stage
+        }
         if (body.status && ['Open', 'In Progress', 'Done', 'Blocked'].includes(body.status)) allowed.status = body.status
-        if (body.sc_status  && STAGE_VALS.includes(body.sc_status))  allowed.sc_status  = body.sc_status
-        if (body.uni_status && STAGE_VALS.includes(body.uni_status)) allowed.uni_status = body.uni_status
+        if (body.sc_status && STAGE_VALS.includes(body.sc_status)) {
+          if (hasScStatus) allowed.sc_status = toDbStage(body.sc_status)
+          allowed.status = statusFromStage(body.sc_status)
+        }
+        if (body.uni_status && STAGE_VALS.includes(body.uni_status)) {
+          if (hasUniStatus) allowed.uni_status = toDbStage(body.uni_status)
+          allowed.status = statusFromStage(body.uni_status)
+        }
         if (body.title)                     allowed.title       = body.title.trim()
         if (body.comments !== undefined)    allowed.comments    = body.comments?.trim() || null
         if (body.has_logs  !== undefined)   allowed.has_logs    = body.has_logs === true

@@ -313,6 +313,25 @@ CREATE INDEX IF NOT EXISTS entity_delete_requests_client_idx ON public.entity_de
 
 ALTER TABLE public.entity_delete_requests ENABLE ROW LEVEL SECURITY;
 
+-- =====================================================================
+-- 16) PASSWORD_RESET_CODES — Super-Admin generated passcodes for forgot-password flow
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public.password_reset_codes (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  code_hash   TEXT NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_by  UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  attempts    INT NOT NULL DEFAULT 0,
+  consumed_at TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS password_reset_codes_user_idx ON public.password_reset_codes (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS password_reset_codes_expiry_idx ON public.password_reset_codes (expires_at);
+
+ALTER TABLE public.password_reset_codes ENABLE ROW LEVEL SECURITY;
+
 -- Migration: run these if the table already exists (run each line separately)
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS sc_status    TEXT NOT NULL DEFAULT 'Pending' CHECK (sc_status  IN ('Pending', 'In Progress', 'Done', 'Blocked'));
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS uni_status   TEXT NOT NULL DEFAULT 'Pending' CHECK (uni_status IN ('Pending', 'In Progress', 'Done', 'Blocked'));
@@ -323,4 +342,14 @@ ALTER TABLE public.entity_delete_requests ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS has_logs     BOOLEAN NOT NULL DEFAULT false;
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS comments     TEXT;
 -- ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS category     TEXT NOT NULL DEFAULT 'Stand Count' CHECK (category IN ('Stand Count', 'Uniformity'));
+-- CREATE TABLE IF NOT EXISTS public.password_reset_codes (
+--   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+--   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+--   code_hash TEXT NOT NULL,
+--   expires_at TIMESTAMPTZ NOT NULL,
+--   created_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+--   attempts INT NOT NULL DEFAULT 0,
+--   consumed_at TIMESTAMPTZ,
+--   created_at TIMESTAMPTZ DEFAULT now()
+-- );
 

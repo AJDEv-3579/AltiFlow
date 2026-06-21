@@ -206,6 +206,9 @@ function PeriodSwitcher() {
 function Login({ onLogin }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [forgotMode, setForgotMode] = useState(false)
+  const [passcode, setPasscode] = useState('')
+  const [newPassword, setNewPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [setup, setSetup] = useState(null)
 
@@ -222,6 +225,26 @@ function Login({ onLogin }) {
       toast.success(`Welcome back, ${r.user.username}`)
       onLogin(r.user)
     } catch (e) { toast.error(e.message) } finally { setBusy(false) }
+  }
+
+  async function submitForgot(e) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await api('/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ username, passcode, new_password: newPassword }),
+      })
+      toast.success('Password reset successful. Sign in with your new password.')
+      setForgotMode(false)
+      setPassword(newPassword)
+      setPasscode('')
+      setNewPassword('')
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   function quick(u, p) { setUsername(u); setPassword(p) }
@@ -266,17 +289,45 @@ function Login({ onLogin }) {
         )}
 
         <GlassCard className="p-8">
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={forgotMode ? submitForgot : submit} className="space-y-4">
             <Field label="User ID">
               <TextInput value={username} onChange={setUsername} placeholder="username" />
             </Field>
-            <Field label="Password">
-              <TextInput value={password} onChange={setPassword} type="password" placeholder="••••••••" />
-            </Field>
-            <Btn type="submit" disabled={busy || !username || !password} className="w-full mt-2">
-              {busy ? 'Authenticating…' : 'Sign in'}
-              <ArrowRight size={16} />
-            </Btn>
+            {!forgotMode ? (
+              <>
+                <Field label="Password">
+                  <TextInput value={password} onChange={setPassword} type="password" placeholder="••••••••" />
+                </Field>
+                <Btn type="submit" disabled={busy || !username || !password} className="w-full mt-2">
+                  {busy ? 'Authenticating…' : 'Sign in'}
+                  <ArrowRight size={16} />
+                </Btn>
+              </>
+            ) : (
+              <>
+                <Field label="Passcode">
+                  <TextInput value={passcode} onChange={setPasscode} placeholder="6-digit passcode" />
+                </Field>
+                <Field label="New Password" hint="At least 6 characters.">
+                  <TextInput value={newPassword} onChange={setNewPassword} type="password" placeholder="••••••••" />
+                </Field>
+                <Btn type="submit" disabled={busy || !username || !passcode || newPassword.length < 6} className="w-full mt-2">
+                  {busy ? 'Resetting…' : 'Reset Password'}
+                  <ArrowRight size={16} />
+                </Btn>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setForgotMode(v => !v)
+                setPasscode('')
+                setNewPassword('')
+              }}
+              className="w-full text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              {forgotMode ? 'Back to sign in' : 'Forgot password? Reset with passcode'}
+            </button>
           </form>
         </GlassCard>
       </motion.div>
@@ -819,6 +870,13 @@ function AdminApp({ user, onLogout }) {
   const [active, setActive] = useState(null)
   const [activeClientProject, setActiveClientProject] = useState(null)
 
+  async function refreshAssignedJobsOnly() {
+    try {
+      const aj = await api('/jobs-assigned')
+      setAssignedJobs(aj.jobs || [])
+    } catch (e) { toast.error(e.message) }
+  }
+
   async function refresh() {
     try {
       const [p, c, u, a] = await Promise.all([
@@ -827,8 +885,10 @@ function AdminApp({ user, onLogout }) {
       setProjects(p.projects); setClients(c.clients); setUsers(u.users); setAnalytics(a)
       const cp = await api('/client-projects')
       setClientProjects(cp.projects || [])
-      const aj = await api('/jobs-assigned')
-      setAssignedJobs(aj.jobs || [])
+      if (['assigned', 'pipeline'].includes(tab)) {
+        const aj = await api('/jobs-assigned')
+        setAssignedJobs(aj.jobs || [])
+      }
       if (tab === 'audit') {
         const al = await api('/audit-logs'); setLogs(al.logs)
       }
@@ -846,15 +906,47 @@ function AdminApp({ user, onLogout }) {
   useEffect(() => { if (isSuperAdmin && tab === 'bin') api('/recycle-bin').then(r => setRecycleItems(r.items || [])).catch(() => {}) }, [tab])
   useEffect(() => {
     if (!['assigned', 'pipeline'].includes(tab)) return
-    api('/jobs-assigned').then(r => setAssignedJobs(r.jobs || [])).catch(() => {})
+    refreshAssignedJobsOnly()
   }, [tab])
 
-  async function moveCard(card, target) {
+  async function moveJobCard(card, target) {
     try {
-      await api(`/projects/${card.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: target }) })
-      toast.success(`Moved → ${target}`)
-      refresh()
-    } catch (e) { toast.error(e.message) }
+      const stageField = card.category === 'Uniformity' ? 'uni_status' : 'sc_status'
+      const dbStage = toDbJobStage(target)
+      await api(`/client-projects/${card.project_id}/jobs/${card.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          [stageField]: dbStage,
+          pipeline_stage: card.category || 'General',
+          pipeline_comment: `Moved from Pipeline to ${target}`,
+        }),
+      })
+      toast.success(`Job moved → ${target}`)
+      refreshAssignedJobsOnly()
+    } catch (e) {
+      const statusFallback = {
+        'Pending': 'Open',
+        'In Progress': 'In Progress',
+        'Done': 'Done',
+        'Cancelled': 'Blocked',
+      }
+      const mappedStatus = statusFallback[target]
+      if (!mappedStatus) {
+        toast.error(e.message)
+        return
+      }
+
+      try {
+        await api(`/client-projects/${card.project_id}/jobs/${card.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: mappedStatus }),
+        })
+        toast.success(`Job moved → ${target}`)
+        refreshAssignedJobsOnly()
+      } catch (fallbackErr) {
+        toast.error(fallbackErr.message || e.message)
+      }
+    }
   }
 
   const tabs = [
@@ -913,9 +1005,9 @@ function AdminApp({ user, onLogout }) {
         }} />}
         {tab === 'pipeline' && (
           <div className="space-y-5">
-            <Kanban projects={projects} onMove={moveCard} onCardClick={setActive} role={user.role} />
-            <FieldJobPipelineTab
+            <JobPipelineKanban
               jobs={assignedJobs}
+              onMove={moveJobCard}
               onOpenWorkspaceById={projectId => {
                 const next = clientProjects.find(p => p.id === projectId)
                 if (next) setActiveClientProject(next)
@@ -1046,45 +1138,151 @@ function AssignedJobsTab({ jobs, onOpenWorkspaceById }) {
   )
 }
 
-function getJobPipelineStage(job) {
-  return (job.category === 'Uniformity' ? job.uni_status : job.sc_status) || 'Pending'
+const JOB_PIPELINE_STAGES = ['Pending', 'In Progress', 'Done', 'Cancelled']
+
+function toDbJobStage(stage) {
+  return stage === 'Cancelled' ? 'Blocked' : stage
 }
 
-function FieldJobPipelineTab({ jobs, onOpenWorkspaceById }) {
-  const stages = ['Pending', 'In Progress', 'Done', 'Blocked']
-  const grouped = Object.fromEntries(stages.map(s => [s, []]))
-  for (const j of (jobs || [])) {
-    const s = getJobPipelineStage(j)
-    if (!grouped[s]) grouped[s] = []
-    grouped[s].push(j)
+function toUiJobStage(stage) {
+  return stage === 'Blocked' ? 'Cancelled' : (stage || 'Pending')
+}
+
+function getJobPipelineStage(job) {
+  const stageByCategory = (job.category === 'Uniformity' ? job.uni_status : job.sc_status)
+  if (stageByCategory) return toUiJobStage(stageByCategory)
+  if (job.status === 'In Progress' || job.status === 'Done' || job.status === 'Blocked') return toUiJobStage(job.status)
+  return 'Pending'
+}
+
+function JobPipelineCard({ job, onOpenWorkspaceById }) {
+  const stage = getJobPipelineStage(job)
+  const stageStyles = {
+    'Pending': 'text-zinc-400 border-zinc-700/60 bg-zinc-800/50',
+    'In Progress': 'text-blue-300 border-blue-500/30 bg-blue-500/10',
+    'Done': 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10',
+    'Cancelled': 'text-red-300 border-red-500/40 bg-red-500/10',
+  }
+
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `job-${job.id}` })
+  const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined
+
+  return (
+    <motion.div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: isDragging ? 0.45 : 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      className="rounded-xl border border-zinc-800/70 bg-zinc-900/45 p-3 cursor-grab active:cursor-grabbing"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-zinc-100 truncate">{job.title}</div>
+          <div className="text-[11px] text-zinc-500 mt-1 truncate">{job.client_name || 'Unknown Client'} · {job.project_name || 'Unknown Workspace'}</div>
+        </div>
+        <span className={`px-2 py-0.5 text-[10px] rounded border ${stageStyles[stage] || stageStyles['Pending']}`}>
+          {stage}
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between mt-3 gap-2">
+        <div className="text-[10px] uppercase tracking-wider text-zinc-600">
+          {job.category || 'Stand Count'} · {job.assigned_to_name || 'Unassigned'}
+        </div>
+        <Btn
+          size="sm"
+          variant="ghost"
+          onClick={(e) => { e.stopPropagation(); onOpenWorkspaceById?.(job.project_id) }}
+          icon={ChevronRight}
+        >
+          Open
+        </Btn>
+      </div>
+    </motion.div>
+  )
+}
+
+function JobPipelineColumn({ stage, count, children }) {
+  const { setNodeRef, isOver } = useDroppable({ id: stage })
+  const dots = {
+    'Pending': 'bg-blue-500',
+    'In Progress': 'bg-amber-500',
+    'Done': 'bg-emerald-500',
+    'Cancelled': 'bg-red-500',
+  }
+  return (
+    <div
+      ref={setNodeRef}
+      className={`flex-1 min-w-[280px] rounded-2xl border ${isOver ? 'border-zinc-500 bg-zinc-900/60' : 'border-zinc-800/60 bg-zinc-900/30'} backdrop-blur transition-colors`}
+    >
+      <div className="px-4 py-3 border-b border-zinc-800/60 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${dots[stage] || 'bg-zinc-500'}`} />
+          <div className="text-sm font-semibold text-zinc-200">{stage}</div>
+        </div>
+        <div className="text-xs font-mono text-zinc-500">{count}</div>
+      </div>
+      <div className="p-3 space-y-3 min-h-[200px]">{children}</div>
+    </div>
+  )
+}
+
+function JobPipelineKanban({ jobs, onMove, onOpenWorkspaceById }) {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const [active, setActive] = useState(null)
+
+  const grouped = useMemo(() => {
+    const g = Object.fromEntries(JOB_PIPELINE_STAGES.map(s => [s, []]))
+    for (const j of (jobs || [])) {
+      const s = getJobPipelineStage(j)
+      if (!g[s]) g[s] = []
+      g[s].push(j)
+    }
+    return g
+  }, [jobs])
+
+  function onDragStart(event) {
+    const id = String(event.active?.id || '')
+    const jobId = id.startsWith('job-') ? id.slice(4) : id
+    setActive((jobs || []).find(j => j.id === jobId) || null)
+  }
+
+  function onDragEnd(event) {
+    setActive(null)
+    if (!event.over) return
+    const id = String(event.active?.id || '')
+    const jobId = id.startsWith('job-') ? id.slice(4) : id
+    const job = (jobs || []).find(j => j.id === jobId)
+    const target = String(event.over.id)
+    if (!job || !JOB_PIPELINE_STAGES.includes(target)) return
+    if (getJobPipelineStage(job) === target) return
+    onMove?.(job, target)
   }
 
   return (
-    <div className="space-y-3">
-      <div className="text-xs uppercase tracking-wider text-zinc-500">Field Job Pipeline (Assigned)</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-        {stages.map(stage => (
-          <GlassCard key={stage} className="p-3 border border-zinc-800/70">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs uppercase tracking-wider text-zinc-400">{stage}</div>
-              <div className="text-[11px] font-mono text-zinc-500">{(grouped[stage] || []).length}</div>
-            </div>
-            <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
-              {(grouped[stage] || []).length === 0 && <div className="text-[11px] text-zinc-600">No cards</div>}
-              {(grouped[stage] || []).map(j => (
-                <div key={j.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/40 p-2.5">
-                  <div className="text-sm font-medium text-zinc-100 truncate">{j.title}</div>
-                  <div className="text-[11px] text-zinc-500 mt-1 truncate">{j.client_name || 'Unknown'} · {j.project_name || 'Unknown'}</div>
-                  <div className="mt-2">
-                    <Btn size="sm" variant="ghost" onClick={() => onOpenWorkspaceById?.(j.project_id)} icon={ChevronRight}>Open</Btn>
-                  </div>
-                </div>
+    <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActive(null)}>
+      <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4">
+        {JOB_PIPELINE_STAGES.map(stage => (
+          <JobPipelineColumn key={stage} stage={stage} count={(grouped[stage] || []).length}>
+            <AnimatePresence>
+              {(grouped[stage] || []).map(job => (
+                <JobPipelineCard key={job.id} job={job} onOpenWorkspaceById={onOpenWorkspaceById} />
               ))}
-            </div>
-          </GlassCard>
+            </AnimatePresence>
+            {(grouped[stage] || []).length === 0 && (
+              <div className="text-center text-xs text-zinc-600 py-8 border border-dashed border-zinc-800/60 rounded-lg">Drop here</div>
+            )}
+          </JobPipelineColumn>
         ))}
       </div>
-    </div>
+      <DragOverlay>
+        {active && <div className="opacity-90"><JobPipelineCard job={active} onOpenWorkspaceById={onOpenWorkspaceById} /></div>}
+      </DragOverlay>
+    </DndContext>
   )
 }
 
@@ -1289,6 +1487,33 @@ function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
     if (!confirm(`Delete user ${username}? It can be restored from Bin.`)) return
     try { await api(`/users/${id}`, { method: 'DELETE' }); toast.success('Moved to Bin'); onRefresh() } catch (e) { toast.error(e.message) }
   }
+
+  async function resetPassword(id, username) {
+    const input = window.prompt(`Set temporary password for ${username} (leave blank to use default):`, '')
+    if (input === null) return
+    try {
+      const body = input.trim() ? { new_password: input.trim() } : {}
+      const r = await api(`/users/${id}/reset-password`, { method: 'POST', body: JSON.stringify(body) })
+      toast.success(`Temporary password for ${r.username}: ${r.temporary_password}`, { duration: 8000 })
+      onRefresh()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  async function generatePasscode(id, username) {
+    const input = window.prompt(`Passcode expiry (minutes) for ${username}:`, '15')
+    if (input === null) return
+    const minutes = Math.max(5, Math.min(60, parseInt(input, 10) || 15))
+    try {
+      const r = await api(`/users/${id}/reset-passcode`, {
+        method: 'POST',
+        body: JSON.stringify({ expires_minutes: minutes }),
+      })
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(r.passcode).catch(() => {})
+      }
+      toast.success(`Passcode for ${r.username}: ${r.passcode} (expires ${new Date(r.expires_at).toLocaleTimeString()})`, { duration: 10000 })
+    } catch (e) { toast.error(e.message) }
+  }
   return (
     <div className="space-y-4">
       {isSuperAdmin && (
@@ -1325,7 +1550,17 @@ function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
                   {u.client_name && <div className="text-[11px] text-zinc-500">{u.client_name}</div>}
                 </div>
               </div>
-              {isSuperAdmin && u.username !== 'devbond01' && <button onClick={() => del(u.id, u.username)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg"><Trash2 size={14} /></button>}
+              {isSuperAdmin && u.username !== 'devbond01' && (
+                <div className="flex items-center gap-2">
+                  <Btn size="sm" variant="ghost" onClick={() => generatePasscode(u.id, u.username)}>
+                    Passcode
+                  </Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => resetPassword(u.id, u.username)}>
+                    Reset Pwd
+                  </Btn>
+                  <button onClick={() => del(u.id, u.username)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg"><Trash2 size={14} /></button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -2408,7 +2643,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
     `h-7 rounded-lg border px-2 text-[11px] font-medium bg-transparent focus:outline-none cursor-pointer ${
       s === 'Done'        ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' :
       s === 'In Progress' ? 'bg-blue-500/10    text-blue-300    border-blue-500/30'    :
-      s === 'Blocked'     ? 'bg-red-500/10     text-red-300     border-red-500/30'     :
+      s === 'Cancelled'   ? 'bg-red-500/10     text-red-300     border-red-500/30'     :
       'bg-zinc-800/60 text-zinc-500 border-zinc-700'}`
 
   const ownerOptions = useMemo(() => {
@@ -2422,7 +2657,9 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
   }, [jobs])
 
   function activeStage(job) {
-    return (job.category === 'Uniformity' ? job.uni_status : job.sc_status) || 'Pending'
+    const stage = (job.category === 'Uniformity' ? job.uni_status : job.sc_status)
+    if (stage) return toUiJobStage(stage)
+    return toUiJobStage(job.status === 'Open' ? 'Pending' : job.status)
   }
 
   const filteredJobs = (jobs || []).filter(job => {
@@ -2464,7 +2701,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
           </select>
         </div>
         <div className="mt-2 flex items-center gap-2 flex-wrap">
-          {['all', 'Pending', 'In Progress', 'Done', 'Blocked'].map(s => (
+          {['all', 'Pending', 'In Progress', 'Done', 'Cancelled'].map(s => (
             <button
               key={s}
               onClick={() => setStageFilter(s)}
@@ -2507,11 +2744,11 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
             const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
             const totalCSV    = flights.reduce((s, f) => s + (f.csv_rows    || 0), 0)
             return (
-              <motion.div key={job.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="min-h-[320px]">
-                <GlassCard className="overflow-hidden h-full flex flex-col">
+              <motion.div key={job.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
+                <GlassCard className="overflow-hidden">
                   {/* Card header — click to expand */}
                   <button type="button" onClick={() => setExpanded(isOpen ? null : job.id)}
-                    className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors grow">
+                    className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors">
                     <div className="flex items-start justify-between gap-3">
                       {/* Left: field info */}
                       <div className="flex-1 min-w-0">
@@ -2566,15 +2803,15 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                         {(() => {
                           const isUni   = job.category === 'Uniformity'
                           const stField = isUni ? 'uni_status' : 'sc_status'
-                          const stValue = (isUni ? job.uni_status : job.sc_status) || 'Pending'
+                          const stValue = activeStage(job)
                           return (
                             <>
                               <select value={stValue}
                                 onClick={e => e.stopPropagation()}
-                                onChange={e => { e.stopPropagation(); updateStage(job.id, stField, e.target.value) }}
+                                onChange={e => { e.stopPropagation(); updateStage(job.id, stField, toDbJobStage(e.target.value)) }}
                                 disabled={updating === job.id + stField}
                                 className={stageCls(stValue)}>
-                                {['Pending','In Progress','Done','Blocked'].map(st => <option key={st} value={st}>{st}</option>)}
+                                {['Pending','In Progress','Done','Cancelled'].map(st => <option key={st} value={st}>{st}</option>)}
                               </select>
                             </>
                           )
