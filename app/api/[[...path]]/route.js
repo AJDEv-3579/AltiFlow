@@ -1330,8 +1330,8 @@ async function handleRoute(request, context) {
         if (category && !VALID_CATS.includes(category)) return json({ error: 'Invalid category' }, 400)
         if (!flight_count || parseInt(flight_count, 10) < 1) return json({ error: 'Flight count required' }, 400)
         if (!Array.isArray(flights) || flights.length < 1) return json({ error: 'Flight data required' }, 400)
-        const invalidFlight = flights.some(f => f?.image_count === null || f?.image_count === undefined || f?.csv_rows === null || f?.csv_rows === undefined)
-        if (invalidFlight) return json({ error: 'Each flight requires image count and CSV rows' }, 400)
+        const invalidFlight = flights.some(f => f?.image_count === null || f?.image_count === undefined)
+        if (invalidFlight) return json({ error: 'Each flight requires image count' }, 400)
         let assigneeId = null
 
         if (CLIENT_ROLES.includes(user.role)) {

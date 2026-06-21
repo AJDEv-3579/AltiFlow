@@ -2431,10 +2431,21 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
     reader.readAsText(file)
   }
 
+  function setFlightMetric(idx, key, value) {
+    setForm(f => {
+      const flights = [...f.flights]
+      const normalized = value === '' || value === null || value === undefined
+        ? null
+        : Math.max(0, Number(value) || 0)
+      flights[idx] = { ...flights[idx], [key]: normalized }
+      return { ...f, flights }
+    })
+  }
+
   async function submit(e) {
     e.preventDefault()
     setSubmitted(true)
-    const hasMissingFlight = form.flights.some(f => f.image_count === null || f.csv_rows === null)
+    const hasMissingFlight = form.flights.some(f => f.image_count === null)
     if (!form.title.trim() || !form.capture_date || !form.drone_name.trim() || !form.comments.trim() || hasMissingFlight) {
       toast.error('Please complete all required fields')
       return
@@ -2466,7 +2477,7 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
     drone: submitted && !form.drone_name.trim(),
     comments: submitted && !form.comments.trim(),
   }
-  const valid = form.title.trim() && form.capture_date && form.drone_name.trim() && form.comments.trim() && !form.flights.some(f => f.image_count === null || f.csv_rows === null)
+  const valid = form.title.trim() && form.capture_date && form.drone_name.trim() && form.comments.trim() && !form.flights.some(f => f.image_count === null)
   const fieldErrorCls = hasError => hasError ? 'border-red-500/70 focus:border-red-400' : ''
 
   return (
@@ -2517,7 +2528,7 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
         <div className="space-y-2">
           <div className="text-[10px] uppercase tracking-wider text-zinc-500">Flight Data</div>
           {form.flights.map((flight, i) => {
-            const missingFlight = submitted && (flight.image_count === null || flight.csv_rows === null)
+            const missingFlight = submitted && (flight.image_count === null)
             return (
             <div key={i} className={`rounded-xl bg-zinc-900/40 border p-3 space-y-2 ${missingFlight ? 'border-red-500/50' : 'border-zinc-800/60'}`}>
               <div className="text-xs font-semibold text-zinc-400">Flight {i + 1}</div>
@@ -2537,6 +2548,17 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
                   {flight.image_count !== null ? `${flight.image_count.toLocaleString()} images` : '—'}
                 </div>
               </div>
+              <div className="flex items-center justify-end">
+                <div className="w-[170px]">
+                  <TextInput
+                    type="number"
+                    value={flight.image_count ?? ''}
+                    onChange={v => setFlightMetric(i, 'image_count', v)}
+                    placeholder="Manual image count"
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
               {/* CSV file */}
               <div className="flex items-center gap-2">
                 <label htmlFor={`csv-${project.id}-${i}`}
@@ -2552,7 +2574,18 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
                   {flight.csv_rows !== null ? `${flight.csv_rows.toLocaleString()} rows` : '—'}
                 </div>
               </div>
-              {missingFlight && <div className="text-[11px] text-red-300">Image folder and CSV are required for this flight.</div>}
+              <div className="flex items-center justify-end">
+                <div className="w-[170px]">
+                  <TextInput
+                    type="number"
+                    value={flight.csv_rows ?? ''}
+                    onChange={v => setFlightMetric(i, 'csv_rows', v)}
+                    placeholder="Manual CSV rows (optional)"
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+              {missingFlight && <div className="text-[11px] text-red-300">Image count is required for this flight. CSV rows are optional.</div>}
             </div>
           )})}
         </div>
@@ -2733,7 +2766,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
   }
 
   const stageCls = s =>
-    `h-7 rounded-lg border px-2 text-[11px] font-medium bg-transparent focus:outline-none cursor-pointer ${
+    `h-7 rounded-lg border px-2 text-[11px] font-medium bg-transparent focus:outline-none ${
       s === 'Done'        ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' :
       s === 'In Progress' ? 'bg-blue-500/10    text-blue-300    border-blue-500/30'    :
       s === 'Cancelled'   ? 'bg-red-500/10     text-red-300     border-red-500/30'     :
@@ -2891,21 +2924,13 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                           </div>
                         )}
                       </div>
-                      {/* Right: single status for the job's category + chevron */}
+                      {/* Right: single status for the job's category (read-only) */}
                       <div className="flex items-center gap-2 shrink-0">
                         {(() => {
-                          const isUni   = job.category === 'Uniformity'
-                          const stField = isUni ? 'uni_status' : 'sc_status'
                           const stValue = activeStage(job)
                           return (
                             <>
-                              <select value={stValue}
-                                onClick={e => e.stopPropagation()}
-                                onChange={e => { e.stopPropagation(); updateStage(job.id, stField, toDbJobStage(e.target.value)) }}
-                                disabled={updating === job.id + stField}
-                                className={stageCls(stValue)}>
-                                {['Pending','In Progress','Done','Cancelled'].map(st => <option key={st} value={st}>{st}</option>)}
-                              </select>
+                              <span className={stageCls(stValue)}>{stValue}</span>
                             </>
                           )
                         })()}
