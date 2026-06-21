@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS public.users (
 
 CREATE INDEX IF NOT EXISTS users_username_idx ON public.users (lower(username));
 CREATE INDEX IF NOT EXISTS users_role_idx ON public.users (role);
+CREATE INDEX IF NOT EXISTS users_role_client_idx ON public.users (role, client_id);
 
 -- =====================================================================
 -- 3) PROJECTS
@@ -214,6 +215,7 @@ CREATE TABLE IF NOT EXISTS public.client_projects (
 );
 
 CREATE INDEX IF NOT EXISTS client_projects_client_id_idx ON public.client_projects (client_id);
+CREATE INDEX IF NOT EXISTS client_projects_client_created_idx ON public.client_projects (client_id, created_at DESC);
 
 ALTER TABLE public.client_projects ENABLE ROW LEVEL SECURITY;
 
@@ -245,6 +247,7 @@ CREATE TABLE IF NOT EXISTS public.jobs (
 
 CREATE INDEX IF NOT EXISTS jobs_project_id_idx ON public.jobs (project_id);
 CREATE INDEX IF NOT EXISTS jobs_status_idx     ON public.jobs (status);
+CREATE INDEX IF NOT EXISTS jobs_project_updated_idx ON public.jobs (project_id, updated_at DESC);
 
 ALTER TABLE public.jobs ENABLE ROW LEVEL SECURITY;
 
@@ -263,6 +266,7 @@ CREATE TABLE IF NOT EXISTS public.job_comments (
 
 CREATE INDEX IF NOT EXISTS job_comments_job_id_idx ON public.job_comments (job_id);
 CREATE INDEX IF NOT EXISTS job_comments_created_at_idx ON public.job_comments (created_at DESC);
+CREATE INDEX IF NOT EXISTS job_comments_job_created_idx ON public.job_comments (job_id, created_at DESC);
 
 ALTER TABLE public.job_comments ENABLE ROW LEVEL SECURITY;
 

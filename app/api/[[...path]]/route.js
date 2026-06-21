@@ -23,6 +23,52 @@ function strip(doc) {
   return rest
 }
 
+const LIST_CACHE_TTL_MS = 10000
+const LIST_CACHE_MAX_ENTRIES = 500
+const listCache = new Map()
+
+function parsePositiveInt(value, fallback, min = 1, max = 200) {
+  const n = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, n))
+}
+
+function getPagination(request, { defaultPage = 1, defaultLimit = 50, maxLimit = 200 } = {}) {
+  const url = new URL(request.url)
+  const page = parsePositiveInt(url.searchParams.get('page'), defaultPage, 1, 100000)
+  const limit = parsePositiveInt(url.searchParams.get('limit'), defaultLimit, 1, maxLimit)
+  const from = (page - 1) * limit
+  const to = from + limit - 1
+  return { url, page, limit, from, to }
+}
+
+function getCachedList(key) {
+  const hit = listCache.get(key)
+  if (!hit) return null
+  if (hit.expiresAt <= Date.now()) {
+    listCache.delete(key)
+    return null
+  }
+  return hit.payload
+}
+
+function setCachedList(key, payload, ttlMs = LIST_CACHE_TTL_MS) {
+  listCache.set(key, { payload, expiresAt: Date.now() + ttlMs })
+  if (listCache.size <= LIST_CACHE_MAX_ENTRIES) return
+  for (const [k, v] of listCache) {
+    if (v.expiresAt <= Date.now()) listCache.delete(k)
+  }
+  if (listCache.size <= LIST_CACHE_MAX_ENTRIES) return
+  const firstKey = listCache.keys().next().value
+  if (firstKey) listCache.delete(firstKey)
+}
+
+function invalidateCachedLists(prefix) {
+  for (const key of listCache.keys()) {
+    if (key.startsWith(prefix)) listCache.delete(key)
+  }
+}
+
 // ---------- Role helpers ----------
 const SUPER_ADMIN = 'Super-Admin'
 const ADMIN       = 'Admin'
@@ -289,6 +335,7 @@ async function audit(projectId, user, desc) {
     username: user?.username || 'system',
     action_desc: desc,
   })
+  invalidateCachedLists('audit-logs:')
 }
 
 async function addJobComment(jobId, user, comment, stage = 'General') {
@@ -301,6 +348,8 @@ async function addJobComment(jobId, user, comment, stage = 'General') {
     stage,
     comment: comment.trim(),
   })
+  invalidateCachedLists('jobs-by-project:')
+  invalidateCachedLists('jobs-assigned:')
 }
 
 async function moveToRecycleBin({ tableName, entityType, id, user, scope = null }) {
@@ -479,7 +528,7 @@ async function handleRoute(request, context) {
     if (route === '/clients' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
-      const { data } = await sb.from('clients').select('*').order('created_at', { ascending: false })
+      const { data } = await sb.from('clients').select('id, name, logo_url, created_at').order('created_at', { ascending: false })
       return json({ clients: data || [] })
     }
 
@@ -508,13 +557,15 @@ async function handleRoute(request, context) {
       if (!user) return json({ error: 'Unauthorized' }, 401)
       // Super-Admin/Admin see all users; Client-Admin sees only their org's Client-Users
       if (INTERNAL_ROLES.includes(user.role)) {
-        const { data: users } = await sb.from('users').select('*').order('created_at', { ascending: false })
-        const { data: clients } = await sb.from('clients').select('*')
+        const [{ data: users }, { data: clients }] = await Promise.all([
+          sb.from('users').select('id, username, role, client_id, must_change_password, created_at, passcode_key_ext, passcode_key_created_at').order('created_at', { ascending: false }),
+          sb.from('clients').select('id, name'),
+        ])
         const cmap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
         return json({ users: (users || []).map(u => ({ ...strip(u), client_name: cmap[u.client_id] || null })) })
       }
       if (user.role === CLIENT_ADMIN) {
-        const { data: users } = await sb.from('users').select('*')
+        const { data: users } = await sb.from('users').select('id, username, role, client_id, must_change_password, created_at, passcode_key_ext, passcode_key_created_at')
           .eq('client_id', user.client_id).eq('role', CLIENT_USER)
           .order('created_at', { ascending: false })
         return json({ users: (users || []).map(u => strip(u)) })
@@ -624,7 +675,10 @@ async function handleRoute(request, context) {
     if (route === '/deletion-requests' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
-      const { data } = await sb.from('delete_requests').select('*').eq('status', 'pending').order('created_at', { ascending: true })
+      const { data } = await sb.from('delete_requests')
+        .select('id, target_user_id, requested_by, reason, status, reviewed_by, created_at, reviewed_at')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true })
       if (!data || data.length === 0) return json({ requests: [] })
       // Enrich with user info
       const userIds = [...new Set(data.flatMap(r => [r.target_user_id, r.requested_by]))]
@@ -668,7 +722,10 @@ async function handleRoute(request, context) {
     if (route === '/recycle-bin' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
-      const { data, error } = await sb.from('recycle_bin').select('*').order('deleted_at', { ascending: false }).limit(300)
+      const { data, error } = await sb.from('recycle_bin')
+        .select('id, entity_type, table_name, entity_id, payload, deleted_by, deleted_by_username, deleted_at, restored_by, restored_by_username, restored_at')
+        .order('deleted_at', { ascending: false })
+        .limit(300)
       if (error) return json({ error: error.message }, 500)
       return json({ items: data || [] })
     }
@@ -716,7 +773,10 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
 
-      let q = sb.from('entity_delete_requests').select('*').eq('status', 'pending').order('created_at', { ascending: false })
+      let q = sb.from('entity_delete_requests')
+        .select('id, entity_type, entity_id, table_name, client_id, requested_by, requested_by_username, requested_by_role, target_role, reason, status, reviewed_by, reviewed_by_username, reviewed_at, created_at')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
       if (user.role === SUPER_ADMIN) {
         q = q.eq('target_role', SUPER_ADMIN)
       } else if (user.role === CLIENT_ADMIN) {
@@ -827,30 +887,47 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user || (![...INTERNAL_ROLES, ...CLIENT_ROLES].includes(user.role))) return json({ error: 'Forbidden' }, 403)
 
-      let q = sb.from('support_tickets').select('*').order('created_at', { ascending: false })
+      const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 50, maxLimit: 200 })
+      const bypassCache = url.searchParams.get('refresh') === '1'
+      const cacheKey = `support-tickets:${user.role}:${user.id}:${user.client_id || 'none'}:${page}:${limit}`
+      if (!bypassCache) {
+        const cached = getCachedList(cacheKey)
+        if (cached) return json(cached)
+      }
+
+      let q = sb.from('support_tickets')
+        .select('id, client_id, created_by, title, description, severity, status, resolution_note, created_at, updated_at, resolved_at')
+        .order('created_at', { ascending: false })
+        .range(from, to)
       if (CLIENT_ROLES.includes(user.role)) q = q.eq('client_id', user.client_id)
       const { data: tickets, error } = await q
       if (error) return json({ error: error.message }, 500)
 
       const creatorIds = [...new Set((tickets || []).map(t => t.created_by))]
       const clientIds = [...new Set((tickets || []).map(t => t.client_id).filter(Boolean))]
-      const { data: creators } = creatorIds.length > 0
-        ? await sb.from('users').select('id, username, role').in('id', creatorIds)
-        : { data: [] }
-      const { data: clients } = clientIds.length > 0
-        ? await sb.from('clients').select('id, name').in('id', clientIds)
-        : { data: [] }
+      const [{ data: creators }, { data: clients }] = await Promise.all([
+        creatorIds.length > 0
+          ? sb.from('users').select('id, username, role').in('id', creatorIds)
+          : Promise.resolve({ data: [] }),
+        clientIds.length > 0
+          ? sb.from('clients').select('id, name').in('id', clientIds)
+          : Promise.resolve({ data: [] }),
+      ])
 
       const creatorMap = Object.fromEntries((creators || []).map(u => [u.id, u]))
       const clientMap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
-      return json({
+      const payload = {
         tickets: (tickets || []).map(t => ({
           ...t,
           created_by_name: creatorMap[t.created_by]?.username || null,
           created_by_role: creatorMap[t.created_by]?.role || null,
           client_name: t.client_id ? (clientMap[t.client_id] || null) : null,
         })),
-      })
+        page,
+        limit,
+      }
+      setCachedList(cacheKey, payload)
+      return json(payload)
     }
 
     if (route === '/support-tickets' && method === 'POST') {
@@ -870,6 +947,7 @@ async function handleRoute(request, context) {
         status: 'Open',
       }).select().single()
       if (error) return json({ error: error.message }, 500)
+      invalidateCachedLists('support-tickets:')
       return json({ ticket: data }, 201)
     }
 
@@ -880,6 +958,7 @@ async function handleRoute(request, context) {
       const ticketId = supportDeleteMatch[1]
       const moved = await moveToRecycleBin({ tableName: 'support_tickets', entityType: 'support_ticket', id: ticketId, user })
       if (!moved.ok) return json({ error: 'Ticket not found' }, 404)
+      invalidateCachedLists('support-tickets:')
       return json({ success: true })
     }
 
@@ -897,6 +976,7 @@ async function handleRoute(request, context) {
       update.updated_at = new Date().toISOString()
       const { data, error } = await sb.from('support_tickets').update(update).eq('id', ticketId).select().single()
       if (error) return json({ error: error.message }, 500)
+      invalidateCachedLists('support-tickets:')
       return json({ ticket: data })
     }
 
@@ -904,7 +984,11 @@ async function handleRoute(request, context) {
     if (route === '/projects' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
-      let q = sb.from('projects').select('*').order('upload_timestamp', { ascending: false })
+      const { page, limit, from, to } = getPagination(request, { defaultLimit: 50, maxLimit: 200 })
+      let q = sb.from('projects')
+        .select('id, client_id, title, drone_name, capture_date, upload_timestamp, image_count, csv_count, base_rover_bool, grid_file_bool, status, assigned_to, sla_deadline, sla_hours, sla_daily_count, refly_reason, issue_note, issue_photo, refly_resolved, delivery_confirmed, delivery_confirmed_at, created_at')
+        .order('upload_timestamp', { ascending: false })
+        .range(from, to)
       if (user.role === CLIENT_ADMIN) q = q.eq('client_id', user.client_id)
       else if (user.role === ADMIN) q = q.eq('assigned_to', user.id)
       else if (user.role === CLIENT_USER) {
@@ -914,8 +998,10 @@ async function handleRoute(request, context) {
         q = q.in('id', ids)
       }
       const { data: projects } = await q
-      const { data: clients } = await sb.from('clients').select('*')
-      const { data: users } = await sb.from('users').select('id, username')
+      const [{ data: clients }, { data: users }] = await Promise.all([
+        sb.from('clients').select('id, name'),
+        sb.from('users').select('id, username'),
+      ])
       const cmap = Object.fromEntries((clients || []).map(c => [c.id, c]))
       const umap = Object.fromEntries((users || []).map(u => [u.id, u]))
       const enriched = (projects || []).map(p => {
@@ -923,7 +1009,7 @@ async function handleRoute(request, context) {
         if (!CLIENT_ROLES.includes(user.role)) result.assignee_name = umap[p.assigned_to]?.username || null
         return result
       })
-      return json({ projects: enriched })
+      return json({ projects: enriched, page, limit })
     }
 
     if (route === '/projects' && method === 'POST') {
@@ -1039,32 +1125,62 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
       const id = route.split('/')[2]
-      const { data: p } = await sb.from('projects').select('*').eq('id', id).maybeSingle()
+      const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 50, maxLimit: 200 })
+      const { data: p } = await sb.from('projects')
+        .select('id, client_id, title, drone_name, capture_date, upload_timestamp, image_count, csv_count, base_rover_bool, grid_file_bool, status, assigned_to, sla_deadline, sla_hours, sla_daily_count, refly_reason, issue_note, issue_photo, refly_resolved, delivery_confirmed, delivery_confirmed_at, created_at')
+        .eq('id', id)
+        .maybeSingle()
       if (!p) return json({ error: 'not found' }, 404)
       if (CLIENT_ROLES.includes(user.role) && p.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
-      const { data: logs } = await sb.from('audit_logs').select('*').eq('project_id', id).order('timestamp', { ascending: false })
       // Client-User sees audit logs as Job Card logs; Client-Admin does not
       const showLogs = !CLIENT_ROLES.includes(user.role) || user.role === CLIENT_USER
-      return json({ project: p, audit_logs: showLogs ? (logs || []) : [] })
+      const { data: logs } = showLogs
+        ? await sb.from('audit_logs')
+          .select('id, project_id, user_id, username, action_desc, timestamp')
+          .eq('project_id', id)
+          .order('timestamp', { ascending: false })
+          .range(from, to)
+        : { data: [] }
+      return json({ project: p, audit_logs: logs || [], audit_page: page, audit_limit: limit, refresh: url.searchParams.get('refresh') === '1' })
     }
 
     // --- AUDIT ---
     if (route === '/audit-logs' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
-      const { data } = await sb.from('audit_logs').select('*').order('timestamp', { ascending: false }).limit(200)
-      return json({ logs: data || [] })
+      const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 100, maxLimit: 300 })
+      const bypassCache = url.searchParams.get('refresh') === '1'
+      const cacheKey = `audit-logs:${user.role}:${user.id}:${page}:${limit}`
+      if (!bypassCache) {
+        const cached = getCachedList(cacheKey)
+        if (cached) return json(cached)
+      }
+      const { data } = await sb.from('audit_logs')
+        .select('id, project_id, user_id, username, action_desc, timestamp')
+        .order('timestamp', { ascending: false })
+        .range(from, to)
+      const payload = { logs: data || [], page, limit }
+      setCachedList(cacheKey, payload)
+      return json(payload)
     }
 
     // --- ANALYTICS ---
     if (route === '/analytics' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
-      const { data: projects } = await sb.from('projects').select('*')
-      const { data: clientProjects } = await sb.from('client_projects').select('id, client_id')
-      const { data: jobs } = await sb.from('jobs').select('id, created_at')
-      const { data: clients } = await sb.from('clients').select('*')
-      const { data: users } = await sb.from('users').select('id')
+      const [
+        { data: projects },
+        { data: clientProjects },
+        { data: jobs },
+        { data: clients },
+        { data: users },
+      ] = await Promise.all([
+        sb.from('projects').select('id, client_id, status, sla_deadline'),
+        sb.from('client_projects').select('id, client_id'),
+        sb.from('jobs').select('id, created_at'),
+        sb.from('clients').select('id, name'),
+        sb.from('users').select('id'),
+      ])
       const now = Date.now()
       const byStatus = {}, bySla = { ok: 0, warning: 0, breached: 0 }, byClient = {}
       let refly = 0
@@ -1131,24 +1247,41 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user || ![ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
 
-      let q = sb.from('jobs').select('*').order('updated_at', { ascending: false })
+      const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 40, maxLimit: 120 })
+      const commentLimit = parsePositiveInt(url.searchParams.get('comment_limit'), 10, 1, 50)
+      const bypassCache = url.searchParams.get('refresh') === '1'
+      const cacheKey = `jobs-assigned:${user.role}:${user.id}:${page}:${limit}:${commentLimit}`
+      if (!bypassCache) {
+        const cached = getCachedList(cacheKey)
+        if (cached) return json(cached)
+      }
+
+      let q = sb.from('jobs')
+        .select('id, project_id, title, description, status, sc_status, uni_status, category, capture_date, drone_name, flight_count, flights, has_logs, comments, assigned_to, created_by, created_at, updated_at')
+        .order('updated_at', { ascending: false })
+        .range(from, to)
       if (user.role === ADMIN) q = q.eq('assigned_to', user.id)
       const { data: jobs, error } = await q
       if (error) return json({ error: error.message }, 500)
 
       const projectIds = [...new Set((jobs || []).map(j => j.project_id))]
       const userIds = [...new Set((jobs || []).flatMap(j => [j.assigned_to, j.created_by]).filter(Boolean))]
-      const { data: projects } = projectIds.length > 0
-        ? await sb.from('client_projects').select('id, name, type, client_id').in('id', projectIds)
-        : { data: [] }
+      const [{ data: projects }, { data: people }] = await Promise.all([
+        projectIds.length > 0
+          ? sb.from('client_projects').select('id, name, type, client_id').in('id', projectIds)
+          : Promise.resolve({ data: [] }),
+        userIds.length > 0
+          ? sb.from('users').select('id, username').in('id', userIds)
+          : Promise.resolve({ data: [] }),
+      ])
       const { data: clients } = projects?.length
         ? await sb.from('clients').select('id, name').in('id', [...new Set(projects.map(p => p.client_id))])
         : { data: [] }
-      const { data: people } = userIds.length > 0
-        ? await sb.from('users').select('id, username').in('id', userIds)
-        : { data: [] }
       const { data: commentRows } = (jobs || []).length > 0
-        ? await sb.from('job_comments').select('*').in('job_id', jobs.map(j => j.id)).order('created_at', { ascending: false })
+        ? await sb.from('job_comments')
+          .select('id, job_id, user_id, username, stage, comment, created_at')
+          .in('job_id', jobs.map(j => j.id))
+          .order('created_at', { ascending: false })
         : { data: [] }
 
       const pMap = Object.fromEntries((projects || []).map(p => [p.id, p]))
@@ -1157,10 +1290,10 @@ async function handleRoute(request, context) {
       const commentsByJob = {}
       for (const c of (commentRows || [])) {
         if (!commentsByJob[c.job_id]) commentsByJob[c.job_id] = []
-        commentsByJob[c.job_id].push(c)
+        if (commentsByJob[c.job_id].length < commentLimit) commentsByJob[c.job_id].push(c)
       }
 
-      return json({
+      const payload = {
         jobs: (jobs || []).map(j => {
           const p = pMap[j.project_id]
           const legacyStage = j.status === 'Blocked'
@@ -1178,7 +1311,12 @@ async function handleRoute(request, context) {
             comments_log: commentsByJob[j.id] || [],
           }
         }),
-      })
+        page,
+        limit,
+        comment_limit: commentLimit,
+      }
+      setCachedList(cacheKey, payload)
+      return json(payload)
     }
 
     // --- CLIENT PROJECTS ---
@@ -1186,7 +1324,11 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user || (![...CLIENT_ROLES, ...INTERNAL_ROLES].includes(user.role))) return json({ error: 'Forbidden' }, 403)
 
-      let q = sb.from('client_projects').select('*').order('created_at', { ascending: false })
+      const { page, limit, from, to } = getPagination(request, { defaultLimit: 50, maxLimit: 200 })
+      let q = sb.from('client_projects')
+        .select('id, client_id, name, type, start_date, end_date, head, created_by, created_at, updated_at')
+        .order('created_at', { ascending: false })
+        .range(from, to)
       if (CLIENT_ROLES.includes(user.role)) q = q.eq('client_id', user.client_id)
 
       const { data, error } = await q
@@ -1198,7 +1340,11 @@ async function handleRoute(request, context) {
         : { data: [] }
       const clientMap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
 
-      return json({ projects: (data || []).map(p => ({ ...p, client_name: clientMap[p.client_id] || null })) })
+      return json({
+        projects: (data || []).map(p => ({ ...p, client_name: clientMap[p.client_id] || null })),
+        page,
+        limit,
+      })
     }
 
     if (route === '/client-projects' && method === 'POST') {
@@ -1293,20 +1439,32 @@ async function handleRoute(request, context) {
       if (!proj) return json({ error: 'Project not found' }, 404)
 
       if (method === 'GET') {
+        const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 50, maxLimit: 150 })
+        const commentLimit = parsePositiveInt(url.searchParams.get('comment_limit'), 10, 1, 50)
+        const bypassCache = url.searchParams.get('refresh') === '1'
+        const cacheKey = `jobs-by-project:${projectId}:${user.role}:${user.id}:${page}:${limit}:${commentLimit}`
+        if (!bypassCache) {
+          const cached = getCachedList(cacheKey)
+          if (cached) return json(cached)
+        }
         const { data, error } = await sb
           .from('jobs')
-          .select('*, assigned_user:assigned_to(username), creator:created_by(username)')
+          .select('id, project_id, title, description, status, sc_status, uni_status, category, capture_date, drone_name, flight_count, flights, has_logs, comments, assigned_to, created_by, created_at, updated_at, assigned_user:assigned_to(username), creator:created_by(username)')
           .eq('project_id', projectId)
-          .order('created_at', { ascending: false })
+          .order('updated_at', { ascending: false })
+          .range(from, to)
         if (error) return json({ error: error.message }, 500)
         const jobIds = (data || []).map(j => j.id)
         const { data: commentRows } = jobIds.length > 0
-          ? await sb.from('job_comments').select('*').in('job_id', jobIds).order('created_at', { ascending: false })
+          ? await sb.from('job_comments')
+            .select('id, job_id, user_id, username, stage, comment, created_at')
+            .in('job_id', jobIds)
+            .order('created_at', { ascending: false })
           : { data: [] }
         const commentsByJob = {}
         for (const c of (commentRows || [])) {
           if (!commentsByJob[c.job_id]) commentsByJob[c.job_id] = []
-          commentsByJob[c.job_id].push(c)
+          if (commentsByJob[c.job_id].length < commentLimit) commentsByJob[c.job_id].push(c)
         }
         const jobs = (data || []).map(j => ({
           ...j,
@@ -1316,7 +1474,9 @@ async function handleRoute(request, context) {
           created_by_name: j.creator?.username || null,
           comments_log: commentsByJob[j.id] || [],
         }))
-        return json({ jobs })
+        const payload = { jobs, page, limit, comment_limit: commentLimit }
+        setCachedList(cacheKey, payload)
+        return json(payload)
       }
 
       if (method === 'POST') {
@@ -1368,6 +1528,8 @@ async function handleRoute(request, context) {
           created_by: user.id,
         }).select().single()
         if (error) return json({ error: error.message }, 500)
+        invalidateCachedLists('jobs-by-project:')
+        invalidateCachedLists('jobs-assigned:')
         await addJobComment(data.id, user, 'Job card created', 'Created')
         if (comments?.trim()) await addJobComment(data.id, user, comments.trim(), 'Created')
         return json({ job: data }, 201)
@@ -1387,6 +1549,8 @@ async function handleRoute(request, context) {
       const { comment, stage } = await request.json()
       if (!comment?.trim()) return json({ error: 'comment required' }, 400)
       await addJobComment(jobId, user, comment.trim(), stage || 'General')
+      invalidateCachedLists('jobs-by-project:')
+      invalidateCachedLists('jobs-assigned:')
       return json({ ok: true })
     }
 
@@ -1439,6 +1603,8 @@ async function handleRoute(request, context) {
         if (body.category && ['Stand Count', 'Uniformity'].includes(body.category)) allowed.category = body.category
         const { data, error } = await sb.from('jobs').update({ ...allowed, updated_at: new Date().toISOString() }).eq('id', jobId).eq('project_id', projectId).select().single()
         if (error) return json({ error: error.message }, 500)
+        invalidateCachedLists('jobs-by-project:')
+        invalidateCachedLists('jobs-assigned:')
 
         if (allowed.status && allowed.status !== currentJob.status) {
           await addJobComment(jobId, user, `Overall status changed: ${currentJob.status || 'Open'} -> ${allowed.status}`, 'Status')
@@ -1466,6 +1632,8 @@ async function handleRoute(request, context) {
           scope: { field: 'project_id', value: projectId },
         })
         if (!moved.ok) return json({ error: 'Job not found' }, 404)
+        invalidateCachedLists('jobs-by-project:')
+        invalidateCachedLists('jobs-assigned:')
         return json({ ok: true })
       }
     }

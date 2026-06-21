@@ -41,6 +41,25 @@ async function api(path, opts = {}) {
   return data
 }
 
+const uiListCache = new Map()
+function getUiListCache(key) {
+  const hit = uiListCache.get(key)
+  if (!hit) return null
+  if (hit.expiresAt <= Date.now()) {
+    uiListCache.delete(key)
+    return null
+  }
+  return hit.value
+}
+function setUiListCache(key, value, ttlMs = 10000) {
+  uiListCache.set(key, { value, expiresAt: Date.now() + ttlMs })
+}
+function clearUiListCache(prefix) {
+  for (const key of uiListCache.keys()) {
+    if (key.startsWith(prefix)) uiListCache.delete(key)
+  }
+}
+
 function downloadTextFile(fileName, content) {
   const blob = new Blob([String(content || '')], { type: 'application/octet-stream' })
   const url = URL.createObjectURL(blob)
@@ -965,11 +984,34 @@ function AdminApp({ user, onLogout }) {
   const [recycleItems, setRecycleItems] = useState([])
   const [active, setActive] = useState(null)
   const [activeClientProject, setActiveClientProject] = useState(null)
+  const assignedJobsCacheRef = useRef(new Map())
+
+  async function loadAuditLogs(force = false) {
+    const cacheKey = `audit-logs:${user.id}:${user.role}`
+    if (!force) {
+      const cached = getUiListCache(cacheKey)
+      if (cached) {
+        setLogs(cached)
+        return
+      }
+    }
+    const al = await api('/audit-logs?limit=120')
+    const nextLogs = al.logs || []
+    setLogs(nextLogs)
+    setUiListCache(cacheKey, nextLogs, 10000)
+  }
 
   async function refreshAssignedJobsOnly() {
     try {
-      const aj = await api('/jobs-assigned')
+      const cacheKey = user.role === 'Admin' ? `jobs-assigned:${user.id}` : 'jobs-assigned:super-admin'
+      const cached = assignedJobsCacheRef.current.get(cacheKey)
+      if (cached && cached.expiresAt > Date.now()) {
+        setAssignedJobs(cached.value)
+        return
+      }
+      const aj = await api('/jobs-assigned?limit=40')
       setAssignedJobs(aj.jobs || [])
+      assignedJobsCacheRef.current.set(cacheKey, { value: aj.jobs || [], expiresAt: Date.now() + 10000 })
     } catch (e) { toast.error(e.message) }
   }
 
@@ -986,7 +1028,7 @@ function AdminApp({ user, onLogout }) {
         setAssignedJobs(aj.jobs || [])
       }
       if (tab === 'audit') {
-        const al = await api('/audit-logs'); setLogs(al.logs)
+        await loadAuditLogs()
       }
       if (isSuperAdmin && tab === 'deletions') {
         const dr = await api('/deletion-requests'); setDeletionRequests(dr.requests)
@@ -996,13 +1038,34 @@ function AdminApp({ user, onLogout }) {
       }
     } catch (e) { toast.error(e.message) }
   }
+
+  async function refreshDashboardMetrics() {
+    try {
+      const [a, p, cp] = await Promise.all([
+        api('/analytics'),
+        api('/projects?limit=100'),
+        api('/client-projects?limit=100'),
+      ])
+      setAnalytics(a)
+      setProjects(p.projects || [])
+      setClientProjects(cp.projects || [])
+    } catch {}
+  }
   useEffect(() => { refresh() }, [])
-  useEffect(() => { if (tab === 'audit') api('/audit-logs').then(r => setLogs(r.logs)).catch(() => {}) }, [tab])
+  useEffect(() => { if (tab === 'audit') loadAuditLogs().catch(() => {}) }, [tab])
   useEffect(() => { if (isSuperAdmin && tab === 'deletions') api('/deletion-requests').then(r => setDeletionRequests(r.requests)).catch(() => {}) }, [tab])
   useEffect(() => { if (isSuperAdmin && tab === 'bin') api('/recycle-bin').then(r => setRecycleItems(r.items || [])).catch(() => {}) }, [tab])
   useEffect(() => {
     if (!['assigned', 'pipeline'].includes(tab)) return
     refreshAssignedJobsOnly()
+  }, [tab])
+  useEffect(() => {
+    if (tab !== 'dashboard') return
+    refreshDashboardMetrics()
+    const t = setInterval(() => {
+      refreshDashboardMetrics()
+    }, 30000)
+    return () => clearInterval(t)
   }, [tab])
 
   async function moveJobCard(card, target) {
@@ -3335,10 +3398,19 @@ function SupportTicketsTab({ user }) {
   const [form, setForm] = useState({ title: '', description: '', severity: 'Medium' })
 
   async function loadTickets() {
+    const cacheKey = `support-tickets:${user.role}:${user.id}:${user.client_id || 'none'}`
+    const cached = getUiListCache(cacheKey)
+    if (cached) {
+      setTickets(cached)
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
-      const r = await api('/support-tickets')
-      setTickets(r.tickets || [])
+      const r = await api('/support-tickets?limit=80')
+      const nextTickets = r.tickets || []
+      setTickets(nextTickets)
+      setUiListCache(cacheKey, nextTickets, 10000)
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -3362,6 +3434,7 @@ function SupportTicketsTab({ user }) {
         }),
       })
       toast.success('Support ticket raised and sent to super admin queue')
+      clearUiListCache('support-tickets:')
       setForm({ title: '', description: '', severity: 'Medium' })
       await loadTickets()
     } catch (e) {
@@ -3378,6 +3451,7 @@ function SupportTicketsTab({ user }) {
         body: JSON.stringify({ status }),
       })
       toast.success('Ticket updated')
+      clearUiListCache('support-tickets:')
       await loadTickets()
     } catch (e) {
       toast.error(e.message)
@@ -3390,6 +3464,7 @@ function SupportTicketsTab({ user }) {
     try {
       await api(`/support-tickets/${id}`, { method: 'DELETE' })
       toast.success('Ticket moved to Bin')
+      clearUiListCache('support-tickets:')
       await loadTickets()
     } catch (e) {
       toast.error(e.message)
@@ -3566,6 +3641,8 @@ function ProjectDetailPage({
   const [assignedUserIds, setAssignedUserIds] = useState([])
   const [showEditProject, setShowEditProject] = useState(false)
   const [projectInfo, setProjectInfo] = useState(project)
+  const [switchingProject, setSwitchingProject] = useState(false)
+  const jobsCacheRef = useRef(new Map())
   const isAdmin = ['Client-Admin', 'Admin', 'Super-Admin'].includes(user.role)
   const canEditProjectInfo = ['Client-Admin', 'Admin', 'Super-Admin'].includes(user.role)
   const canDeleteWorkspace = ['Client-Admin', 'Super-Admin'].includes(user.role)
@@ -3580,22 +3657,30 @@ function ProjectDetailPage({
     if (!showDashboard && tab === 'dashboard') setTab('jobs')
   }, [showDashboard, tab])
 
-  async function loadJobs() {
-    try { const r = await api(`/client-projects/${projectInfo.id}/jobs`); setJobs(r.jobs || []) }
+  async function loadJobs(projectId = project.id, { useCache = true } = {}) {
+    if (useCache && jobsCacheRef.current.has(projectId)) {
+      setJobs(jobsCacheRef.current.get(projectId) || [])
+    }
+    try {
+      const r = await api(`/client-projects/${projectId}/jobs`)
+      const list = r.jobs || []
+      jobsCacheRef.current.set(projectId, list)
+      setJobs(list)
+    }
     catch (e) { toast.error(e.message) }
   }
-  async function loadAssignments() {
+  async function loadAssignments(projectId = project.id) {
     try {
-      const r = await api(`/projects/${project.id}/assigned-users`)
+      const r = await api(`/projects/${projectId}/assigned-users`)
       setAssignedUserIds(r.user_ids || [])
     } catch (e) { toast.error(e.message) }
   }
   async function saveAssignments(userIds) {
-    await api(`/projects/${project.id}/assign-users`, {
+    await api(`/projects/${projectInfo.id}/assign-users`, {
       method: 'POST',
       body: JSON.stringify({ user_ids: userIds }),
     })
-    await loadAssignments()
+    await loadAssignments(projectInfo.id)
     await onRefresh()
   }
   async function createTeamUser(username) {
@@ -3606,13 +3691,20 @@ function ProjectDetailPage({
     await onRefresh()
     return r.user
   }
-  useEffect(() => { loadJobs(); loadAssignments() }, [project.id])
   useEffect(() => {
+    const nextId = project.id
+    setSwitchingProject(true)
+    loadJobs(nextId, { useCache: true }).finally(() => setSwitchingProject(false))
+    if (isAdmin) loadAssignments(nextId)
+    else setAssignedUserIds([])
+  }, [project.id, isAdmin])
+  useEffect(() => {
+    if (!['jobs', 'issues', 'tracker'].includes(tab)) return
     const t = setInterval(() => {
-      loadJobs()
+      loadJobs(project.id, { useCache: false })
     }, 15000)
     return () => clearInterval(t)
-  }, [project.id])
+  }, [project.id, tab])
 
   async function deleteWorkspace() {
     if (!canDeleteWorkspace) return
@@ -3671,14 +3763,19 @@ function ProjectDetailPage({
           {showProjectSwitcher && projects.length > 1 && (
             <div className="w-56 shrink-0">
               <select
-                value={project.id}
-                onChange={e => onSwitchProject?.(e.target.value)}
+                value={projectInfo.id}
+                onChange={e => {
+                  const nextId = e.target.value
+                  if (nextId === projectInfo.id) return
+                  onSwitchProject?.(nextId)
+                }}
                 className="w-full h-10 bg-zinc-900/70 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer"
               >
                 {projects.map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
+              {switchingProject && <div className="text-[10px] text-zinc-500 mt-1">Switching project...</div>}
             </div>
           )}
           <div className="flex items-center gap-3 min-w-0 flex-1">
