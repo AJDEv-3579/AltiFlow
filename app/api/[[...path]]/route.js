@@ -1199,6 +1199,10 @@ async function handleRoute(request, context) {
       if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
 
       const supportsProjectsSla = await hasProjectsSlaSchema()
+      const supportsAdvancedJobSchema = await hasJobsAdvancedSchema()
+      const jobsAnalyticsSelect = supportsAdvancedJobSchema
+        ? 'id, project_id, created_at, status, sc_status, uni_status'
+        : 'id, project_id, created_at, status'
       const [
         { data: projects },
         { data: clientProjects },
@@ -1208,7 +1212,7 @@ async function handleRoute(request, context) {
       ] = await Promise.all([
         sb.from('projects').select(supportsProjectsSla ? 'id, client_id, status, sla_deadline' : 'id, client_id, status'),
         sb.from('client_projects').select('id, client_id'),
-        sb.from('jobs').select('id, created_at'),
+        sb.from('jobs').select(jobsAnalyticsSelect),
         sb.from('clients').select('id, name'),
         sb.from('users').select('id'),
       ])
@@ -1229,6 +1233,32 @@ async function handleRoute(request, context) {
 
       for (const cp of (clientProjects || [])) {
         byClient[cp.client_id] = (byClient[cp.client_id] || 0) + 1
+      }
+
+      // If legacy projects are absent, derive SLA health from field jobs so dashboard remains meaningful.
+      const hasLegacySlaData = supportsProjectsSla && (projects || []).some(p => p?.sla_deadline)
+      if (!hasLegacySlaData) {
+        bySla.ok = 0
+        bySla.warning = 0
+        bySla.breached = 0
+        for (const j of (jobs || [])) {
+          const createdAtMs = new Date(j.created_at).getTime()
+          if (Number.isNaN(createdAtMs)) continue
+          const left = (createdAtMs + (24 * 3600000)) - now
+          const scDone = j.sc_status === 'Done'
+          const uniDone = j.uni_status === 'Done'
+          const statusDone = j.status === 'Done'
+          const done = statusDone || (supportsAdvancedJobSchema && scDone && uniDone)
+          if (done) {
+            bySla.ok += 1
+          } else if (left < 0) {
+            bySla.breached += 1
+          } else if (left < 4 * 3600000) {
+            bySla.warning += 1
+          } else {
+            bySla.ok += 1
+          }
+        }
       }
 
       const monthKeys = []
