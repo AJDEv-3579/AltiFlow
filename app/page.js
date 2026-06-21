@@ -2445,9 +2445,19 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
   async function submit(e) {
     e.preventDefault()
     setSubmitted(true)
-    const hasMissingFlight = form.flights.some(f => f.image_count === null)
-    if (!form.title.trim() || !form.capture_date || !form.drone_name.trim() || !form.comments.trim() || hasMissingFlight) {
-      toast.error('Please complete all required fields')
+    const missingItems = []
+    if (!form.title.trim()) missingItems.push('Field Name')
+    if (!form.capture_date) missingItems.push('Date of Capture')
+    if (!form.drone_name.trim()) missingItems.push('Drone Name')
+    if (!form.comments.trim()) missingItems.push('Comments')
+    const missingFlights = form.flights
+      .map((f, idx) => ({ idx, missing: f.image_count === null }))
+      .filter(x => x.missing)
+      .map(x => `Flight ${x.idx + 1} Image Count`)
+    if (missingFlights.length > 0) missingItems.push(...missingFlights)
+
+    if (missingItems.length > 0) {
+      toast.error(`Missing required fields: ${missingItems.join(', ')}`)
       return
     }
     setBusy(true)
@@ -2621,7 +2631,7 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
 
         <div className="flex gap-2 pt-1">
           <Btn type="button" variant="ghost" onClick={onCancel} className="flex-1">Cancel</Btn>
-          <Btn type="submit" disabled={busy || !valid} className="flex-1" icon={Upload}>
+          <Btn type="submit" disabled={busy} className="flex-1" icon={Upload}>
             {busy ? 'Submitting…' : 'Submit Job Card'}
           </Btn>
         </div>
@@ -3731,7 +3741,7 @@ function ProjectDetailPage({
 
 // ============== CLIENT-ADMIN APP ==============
 function ClientAdminApp({ user, onLogout }) {
-  const [screen, setScreen] = useState('welcome')
+  const [screen, setScreen] = useState('projects')
   const [projects, setProjects] = useState([])
   const [currentProject, setCurrentProject] = useState(null)
   const [orgUsers, setOrgUsers] = useState([])
@@ -3744,15 +3754,11 @@ function ClientAdminApp({ user, onLogout }) {
     } catch (e) { toast.error(e.message) }
   }
 
-  useEffect(() => {
-    const t = setTimeout(() => { loadData().finally(() => setScreen('projects')) }, 2500)
-    return () => clearTimeout(t)
-  }, [])
+  useEffect(() => { loadData() }, [])
 
   function openProject(p) { setCurrentProject(p); setScreen('project-detail') }
   function backToProjects() { setCurrentProject(null); setScreen('projects'); loadData() }
 
-  if (screen === 'welcome') return <><WelcomeScreen user={user} /><PeriodSwitcher /></>
   if (screen === 'project-detail' && currentProject) {
     return (
       <>
@@ -3795,7 +3801,7 @@ function ClientAdminUserCreate({ onSubmit }) {
 function ClientApp({ user, onLogout }) {
   const [projects, setProjects] = useState([])
   const [currentProject, setCurrentProject] = useState(null)
-  const [screen, setScreen] = useState('welcome')
+  const [screen, setScreen] = useState('waiting')
   const [loadingProject, setLoadingProject] = useState(false)
 
   async function loadData() {
@@ -3822,12 +3828,7 @@ function ClientApp({ user, onLogout }) {
     }
   }
 
-  useEffect(() => {
-    const t = setTimeout(() => { loadData() }, 2000)
-    return () => clearTimeout(t)
-  }, [])
-
-  if (screen === 'welcome') return <><WelcomeScreen user={user} /><PeriodSwitcher /></>
+  useEffect(() => { loadData() }, [])
   if (screen === 'waiting') {
     return (
       <>
