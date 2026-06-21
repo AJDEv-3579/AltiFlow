@@ -380,6 +380,7 @@ function ChangePassword({ user, onDone }) {
   const [next, setNext] = useState('')
   const [passkeyFile, setPasskeyFile] = useState(null)
   const [passkeyFileContent, setPasskeyFileContent] = useState('')
+  const [generatedPasskey, setGeneratedPasskey] = useState(null)
   const [busy, setBusy] = useState(false)
 
   async function submit(e) {
@@ -390,13 +391,21 @@ function ChangePassword({ user, onDone }) {
       if (!user.must_change_password) payload.key_file_content = passkeyFileContent
       const r = await api('/auth/change-password', { method: 'POST', body: JSON.stringify(payload) })
       if (r.passkey_file?.file_content) {
+        setGeneratedPasskey(r.passkey_file)
         downloadTextFile(r.passkey_file.file_name, r.passkey_file.file_content)
         toast.success('Password updated. Your passkey file has been downloaded. Store it safely.', { duration: 9000 })
       } else {
         toast.success('Password updated.')
       }
       onDone()
-    } catch (e) { toast.error(e.message) } finally { setBusy(false) }
+    } catch (e) {
+      const msg = String(e.message || '')
+      if (msg.includes('schema.sql')) {
+        toast.error('Database migration missing. Run supabase/schema.sql first, then retry password update.')
+      } else {
+        toast.error(msg || 'Failed to update password')
+      }
+    } finally { setBusy(false) }
   }
 
   return (
@@ -420,6 +429,12 @@ function ChangePassword({ user, onDone }) {
             <Field label="New password" hint="At least 6 characters.">
               <TextInput value={next} onChange={setNext} type="password" placeholder="••••••••" />
             </Field>
+            {user.must_change_password && (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                After successful update, your encrypted passkey file will auto-download.
+                Keep it safe. You must upload it for future password resets.
+              </div>
+            )}
             {!user.must_change_password && (
               <Field label="Passkey file" hint="Required for password changes after first-time setup.">
                 <input
@@ -445,6 +460,15 @@ function ChangePassword({ user, onDone }) {
               </Field>
             )}
             <Btn type="submit" disabled={busy || (!user.must_change_password && !passkeyFileContent)} className="w-full">{busy ? 'Updating…' : 'Update password'}</Btn>
+            {generatedPasskey?.file_content && (
+              <button
+                type="button"
+                onClick={() => downloadTextFile(generatedPasskey.file_name, generatedPasskey.file_content)}
+                className="w-full text-xs text-emerald-300 hover:text-emerald-200 underline underline-offset-4"
+              >
+                Download passkey file again
+              </button>
+            )}
           </form>
         </GlassCard>
       </motion.div>

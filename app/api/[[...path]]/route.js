@@ -19,7 +19,7 @@ function corsify(response) {
 function json(data, status = 200) { return corsify(NextResponse.json(data, { status })) }
 function strip(doc) {
   if (!doc) return doc
-  const { password_hash, ...rest } = doc
+  const { password_hash, passcode_key_hash, ...rest } = doc
   return rest
 }
 
@@ -104,11 +104,84 @@ async function ensurePasskeyColumns() {
   }
 }
 
+async function hasPasskeyColumns() {
+  const { error } = await sb.from('users').select('id, passcode_key_hash').limit(1)
+  return !error
+}
+
+async function getFallbackPasskeyRow(userId) {
+  await ensurePasswordResetCodesTable()
+  const nowIso = new Date().toISOString()
+  const { data } = await sb
+    .from('password_reset_codes')
+    .select('*')
+    .eq('user_id', userId)
+    .is('consumed_at', null)
+    .is('created_by', null)
+    .gt('expires_at', nowIso)
+    .order('created_at', { ascending: false })
+    .maybeSingle()
+  return data || null
+}
+
+async function userHasPasskey(userId, passcodeKeyHash) {
+  if (passcodeKeyHash) return true
+  const fallback = await getFallbackPasskeyRow(userId)
+  return Boolean(fallback?.code_hash)
+}
+
+async function updateUserPassword(userId, newPassword, mustChangePassword = false) {
+  const { data, error } = await sb.from('users').update({
+    password_hash: await bcrypt.hash(newPassword, 10),
+    must_change_password: mustChangePassword,
+  }).eq('id', userId).select('id').maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!data?.id) throw new Error('Password update failed for target user')
+}
+
+async function savePasskeyCredential(userId, rawKey, extension) {
+  if (await hasPasskeyColumns()) {
+    const { data, error } = await sb.from('users').update({
+      passcode_key_hash: await bcrypt.hash(rawKey, 10),
+      passcode_key_ext: extension,
+      passcode_key_created_at: new Date().toISOString(),
+    }).eq('id', userId).select('id').maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data?.id) throw new Error('Failed to store passkey credential')
+    return
+  }
+
+  await ensurePasswordResetCodesTable()
+  const { error: consumeError } = await sb.from('password_reset_codes').update({ consumed_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .is('consumed_at', null)
+    .is('created_by', null)
+  if (consumeError) throw new Error(consumeError.message)
+
+  const hundredYearsMs = 100 * 365 * 24 * 60 * 60 * 1000
+  const expiresAt = new Date(Date.now() + hundredYearsMs)
+  const { error: insertError } = await sb.from('password_reset_codes').insert({
+    id: uuidv4(),
+    user_id: userId,
+    code_hash: await bcrypt.hash(rawKey, 10),
+    expires_at: expiresAt.toISOString(),
+    created_by: null,
+    attempts: 0,
+  })
+  if (insertError) throw new Error(insertError.message)
+}
+
 async function verifyUserPasskey(user, keyFileContent) {
-  if (!user?.passcode_key_hash) throw new Error('Passkey not initialized for this user')
+  if (!user?.id) throw new Error('Passkey not initialized for this user')
   const payload = decryptPasskeyPayload(keyFileContent)
   if (payload?.uid !== user.id || !payload?.key) throw new Error('Passkey does not match this account')
-  const ok = await bcrypt.compare(String(payload.key), user.passcode_key_hash)
+  let expectedHash = user.passcode_key_hash
+  if (!expectedHash) {
+    const fallback = await getFallbackPasskeyRow(user.id)
+    expectedHash = fallback?.code_hash || null
+  }
+  if (!expectedHash) throw new Error('Passkey not initialized for this user')
+  const ok = await bcrypt.compare(String(payload.key), expectedHash)
   if (!ok) throw new Error('Invalid passkey')
 }
 
@@ -349,13 +422,13 @@ async function handleRoute(request, context) {
     if (route === '/auth/change-password' && method === 'POST') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
-      await ensurePasskeyColumns()
       const { current_password, new_password, key_file_content } = await request.json()
       if (!new_password || new_password.length < 6) return json({ error: 'New password must be 6+ chars' }, 400)
       const ok = await bcrypt.compare(current_password || '', user.password_hash)
       if (!ok) return json({ error: 'Current password incorrect' }, 401)
 
-      const needsInitialPasskey = !user.passcode_key_hash || user.must_change_password
+      const hasStoredPasskey = await userHasPasskey(user.id, user.passcode_key_hash)
+      const needsInitialPasskey = !hasStoredPasskey || user.must_change_password
       if (!needsInitialPasskey) {
         if (!key_file_content) return json({ error: 'Passkey file is required to change password' }, 400)
         try {
@@ -372,25 +445,16 @@ async function handleRoute(request, context) {
           file_name: generated.file_name,
           file_content: generated.file_content,
         }
-        await sb.from('users').update({
-          password_hash: await bcrypt.hash(new_password, 10),
-          must_change_password: false,
-          passcode_key_hash: await bcrypt.hash(generated.rawKey, 10),
-          passcode_key_ext: generated.extension,
-          passcode_key_created_at: new Date().toISOString(),
-        }).eq('id', user.id)
+        await savePasskeyCredential(user.id, generated.rawKey, generated.extension)
+        await updateUserPassword(user.id, new_password, false)
         return json({ success: true, passkey_file: passkeyFile })
       }
 
-      await sb.from('users').update({
-        password_hash: await bcrypt.hash(new_password, 10),
-        must_change_password: false,
-      }).eq('id', user.id)
+      await updateUserPassword(user.id, new_password, false)
       return json({ success: true })
     }
 
     if (route === '/auth/forgot-password' && method === 'POST') {
-      await ensurePasskeyColumns()
       const { username, key_file_content, new_password } = await request.json()
       if (!username || !key_file_content || !new_password) {
         return json({ error: 'username, key_file_content and new_password are required' }, 400)
@@ -406,10 +470,7 @@ async function handleRoute(request, context) {
         return json({ error: 'Invalid username or passkey file' }, 401)
       }
 
-      await sb.from('users').update({
-        password_hash: await bcrypt.hash(new_password, 10),
-        must_change_password: false,
-      }).eq('id', user.id)
+      await updateUserPassword(user.id, new_password, false)
 
       return json({ success: true })
     }
@@ -513,10 +574,7 @@ async function handleRoute(request, context) {
       if (!target) return json({ error: 'User not found' }, 404)
       if (target.username === 'devbond01') return json({ error: 'Cannot reset Super-Admin root account through this action' }, 400)
 
-      await sb.from('users').update({
-        password_hash: await bcrypt.hash(password, 10),
-        must_change_password: true,
-      }).eq('id', targetId)
+      await updateUserPassword(targetId, password, true)
 
       return json({ success: true, username: target.username, temporary_password: password })
     }
@@ -524,20 +582,13 @@ async function handleRoute(request, context) {
     if (route.match(/^\/users\/[^/]+\/reset-passcode$/) && method === 'POST') {
       const user = await getUserFromRequest(request)
       if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — only Super-Admin can generate passkey files' }, 403)
-      await ensurePasskeyColumns()
 
       const targetId = route.split('/')[2]
       const { data: target } = await sb.from('users').select('id, username').eq('id', targetId).maybeSingle()
       if (!target) return json({ error: 'User not found' }, 404)
 
       const generated = createPasskeyFile(targetId)
-      const { error } = await sb.from('users').update({
-        passcode_key_hash: await bcrypt.hash(generated.rawKey, 10),
-        passcode_key_ext: generated.extension,
-        passcode_key_created_at: new Date().toISOString(),
-      })
-        .eq('id', targetId)
-      if (error) return json({ error: error.message }, 500)
+      await savePasskeyCredential(targetId, generated.rawKey, generated.extension)
 
       return json({
         success: true,
