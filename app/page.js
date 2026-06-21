@@ -283,7 +283,7 @@ function Login({ onLogin }) {
             </div>
             <div className="text-3xl font-bold tracking-tight">Altiflow</div>
           </motion.div>
-          <div className="text-sm text-zinc-400">Industrial Photogrammetry Operations</div>
+          <div className="text-sm text-zinc-400">UAV Project Management & Operations, Simplified</div>
         </div>
 
         {showSetup && (
