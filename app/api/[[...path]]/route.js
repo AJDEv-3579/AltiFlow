@@ -26,6 +26,8 @@ function strip(doc) {
 const LIST_CACHE_TTL_MS = 10000
 const LIST_CACHE_MAX_ENTRIES = 500
 const listCache = new Map()
+let jobsAdvancedSchemaAvailable = null
+let projectsSlaSchemaAvailable = null
 
 function parsePositiveInt(value, fallback, min = 1, max = 200) {
   const n = Number.parseInt(String(value ?? ''), 10)
@@ -67,6 +69,33 @@ function invalidateCachedLists(prefix) {
   for (const key of listCache.keys()) {
     if (key.startsWith(prefix)) listCache.delete(key)
   }
+}
+
+async function hasJobsAdvancedSchema() {
+  if (jobsAdvancedSchemaAvailable !== null) return jobsAdvancedSchemaAvailable
+  const { error } = await sb
+    .from('jobs')
+    .select('id, sc_status, uni_status, category, capture_date, drone_name, flight_count, flights, has_logs, comments')
+    .limit(1)
+  jobsAdvancedSchemaAvailable = !error
+  return jobsAdvancedSchemaAvailable
+}
+
+function getJobsSelectColumns(advanced, includeUserRelations = false) {
+  const base = 'id, project_id, title, description, status, assigned_to, created_by, created_at, updated_at'
+  const advancedCols = 'sc_status, uni_status, category, capture_date, drone_name, flight_count, flights, has_logs, comments'
+  const relations = includeUserRelations ? ', assigned_user:assigned_to(username), creator:created_by(username)' : ''
+  return advanced ? `${base}, ${advancedCols}${relations}` : `${base}${relations}`
+}
+
+async function hasProjectsSlaSchema() {
+  if (projectsSlaSchemaAvailable !== null) return projectsSlaSchemaAvailable
+  const { error } = await sb
+    .from('projects')
+    .select('id, sla_deadline')
+    .limit(1)
+  projectsSlaSchemaAvailable = !error
+  return projectsSlaSchemaAvailable
 }
 
 // ---------- Role helpers ----------
@@ -1168,6 +1197,8 @@ async function handleRoute(request, context) {
     if (route === '/analytics' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user || !INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
+
+      const supportsProjectsSla = await hasProjectsSlaSchema()
       const [
         { data: projects },
         { data: clientProjects },
@@ -1175,7 +1206,7 @@ async function handleRoute(request, context) {
         { data: clients },
         { data: users },
       ] = await Promise.all([
-        sb.from('projects').select('id, client_id, status, sla_deadline'),
+        sb.from('projects').select(supportsProjectsSla ? 'id, client_id, status, sla_deadline' : 'id, client_id, status'),
         sb.from('client_projects').select('id, client_id'),
         sb.from('jobs').select('id, created_at'),
         sb.from('clients').select('id, name'),
@@ -1188,10 +1219,12 @@ async function handleRoute(request, context) {
         byStatus[p.status] = (byStatus[p.status] || 0) + 1
         if (p.status === 'Failed_Refly') refly++
         byClient[p.client_id] = (byClient[p.client_id] || 0) + 1
-        const left = new Date(p.sla_deadline).getTime() - now
-        if (left < 0) bySla.breached++
-        else if (left < 4 * 3600000) bySla.warning++
-        else bySla.ok++
+        if (supportsProjectsSla && p.sla_deadline) {
+          const left = new Date(p.sla_deadline).getTime() - now
+          if (left < 0) bySla.breached++
+          else if (left < 4 * 3600000) bySla.warning++
+          else bySla.ok++
+        }
       }
 
       for (const cp of (clientProjects || [])) {
@@ -1256,8 +1289,9 @@ async function handleRoute(request, context) {
         if (cached) return json(cached)
       }
 
+      const supportsAdvancedJobSchema = await hasJobsAdvancedSchema()
       let q = sb.from('jobs')
-        .select('id, project_id, title, description, status, sc_status, uni_status, category, capture_date, drone_name, flight_count, flights, has_logs, comments, assigned_to, created_by, created_at, updated_at')
+        .select(getJobsSelectColumns(supportsAdvancedJobSchema, false))
         .order('updated_at', { ascending: false })
         .range(from, to)
       if (user.role === ADMIN) q = q.eq('assigned_to', user.id)
@@ -1301,6 +1335,7 @@ async function handleRoute(request, context) {
             : ((j.status === 'In Progress' || j.status === 'Done') ? j.status : 'Pending')
           return {
             ...j,
+            category: j.category || 'Stand Count',
             sc_status: j.sc_status || legacyStage,
             uni_status: j.uni_status || legacyStage,
             project_name: p?.name || null,
@@ -1447,9 +1482,10 @@ async function handleRoute(request, context) {
           const cached = getCachedList(cacheKey)
           if (cached) return json(cached)
         }
+        const supportsAdvancedJobSchema = await hasJobsAdvancedSchema()
         const { data, error } = await sb
           .from('jobs')
-          .select('id, project_id, title, description, status, sc_status, uni_status, category, capture_date, drone_name, flight_count, flights, has_logs, comments, assigned_to, created_by, created_at, updated_at, assigned_user:assigned_to(username), creator:created_by(username)')
+          .select(getJobsSelectColumns(supportsAdvancedJobSchema, true))
           .eq('project_id', projectId)
           .order('updated_at', { ascending: false })
           .range(from, to)
@@ -1468,6 +1504,7 @@ async function handleRoute(request, context) {
         }
         const jobs = (data || []).map(j => ({
           ...j,
+          category: j.category || 'Stand Count',
           sc_status: j.sc_status || (j.status === 'Blocked' ? 'Cancelled' : (j.status === 'Open' ? 'Pending' : j.status)),
           uni_status: j.uni_status || (j.status === 'Blocked' ? 'Cancelled' : (j.status === 'Open' ? 'Pending' : j.status)),
           assigned_to_name: j.assigned_user?.username || null,
@@ -1507,26 +1544,33 @@ async function handleRoute(request, context) {
           }
         }
 
+        const supportsAdvancedJobSchema = await hasJobsAdvancedSchema()
         if (assigneeId) {
           const { data: assignee, error: assigneeErr } = await sb.from('users').select('id').eq('id', assigneeId).eq('role', ADMIN).maybeSingle()
           if (assigneeErr || !assignee) return json({ error: 'assigned_to must be an Admin user' }, 400)
         }
 
-        const { data, error } = await sb.from('jobs').insert({
+        const insertPayload = {
           id: uuidv4(),
           project_id: projectId,
           title: title.trim(),
-          capture_date: capture_date,
-          drone_name: drone_name.trim(),
-          category: VALID_CATS.includes(category) ? category : 'Stand Count',
-          flight_count: flight_count || 1,
-          flights: Array.isArray(flights) ? flights : [],
-          has_logs: has_logs === true,
-          comments: comments?.trim() || null,
           assigned_to: assigneeId,
           status: 'Open',
           created_by: user.id,
-        }).select().single()
+        }
+        if (supportsAdvancedJobSchema) {
+          insertPayload.capture_date = capture_date
+          insertPayload.drone_name = drone_name.trim()
+          insertPayload.category = VALID_CATS.includes(category) ? category : 'Stand Count'
+          insertPayload.flight_count = flight_count || 1
+          insertPayload.flights = Array.isArray(flights) ? flights : []
+          insertPayload.has_logs = has_logs === true
+          insertPayload.comments = comments?.trim() || null
+        } else {
+          insertPayload.description = comments?.trim() || null
+        }
+
+        const { data, error } = await sb.from('jobs').insert(insertPayload).select().single()
         if (error) return json({ error: error.message }, 500)
         invalidateCachedLists('jobs-by-project:')
         invalidateCachedLists('jobs-assigned:')
@@ -1572,6 +1616,9 @@ async function handleRoute(request, context) {
         const STAGE_VALS = ['Pending', 'In Progress', 'Done', 'Blocked', 'Cancelled']
         const hasScStatus = Object.prototype.hasOwnProperty.call(currentJob, 'sc_status')
         const hasUniStatus = Object.prototype.hasOwnProperty.call(currentJob, 'uni_status')
+        const hasComments = Object.prototype.hasOwnProperty.call(currentJob, 'comments')
+        const hasLogs = Object.prototype.hasOwnProperty.call(currentJob, 'has_logs')
+        const hasCategory = Object.prototype.hasOwnProperty.call(currentJob, 'category')
         const toDbStage = (stage) => (stage === 'Cancelled' ? 'Blocked' : stage)
         const statusFromStage = (stage) => {
           if (stage === 'Pending') return 'Open'
@@ -1588,8 +1635,8 @@ async function handleRoute(request, context) {
           allowed.status = statusFromStage(body.uni_status)
         }
         if (body.title)                     allowed.title       = body.title.trim()
-        if (body.comments !== undefined)    allowed.comments    = body.comments?.trim() || null
-        if (body.has_logs  !== undefined)   allowed.has_logs    = body.has_logs === true
+        if (body.comments !== undefined && hasComments) allowed.comments = body.comments?.trim() || null
+        if (body.has_logs  !== undefined && hasLogs) allowed.has_logs = body.has_logs === true
         if (body.assigned_to !== undefined) {
           if (![ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Only Admin can reassign jobs' }, 403)
           if (body.assigned_to) {
@@ -1600,7 +1647,7 @@ async function handleRoute(request, context) {
             allowed.assigned_to = null
           }
         }
-        if (body.category && ['Stand Count', 'Uniformity'].includes(body.category)) allowed.category = body.category
+        if (body.category && hasCategory && ['Stand Count', 'Uniformity'].includes(body.category)) allowed.category = body.category
         const { data, error } = await sb.from('jobs').update({ ...allowed, updated_at: new Date().toISOString() }).eq('id', jobId).eq('project_id', projectId).select().single()
         if (error) return json({ error: error.message }, 500)
         invalidateCachedLists('jobs-by-project:')

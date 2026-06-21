@@ -1464,6 +1464,9 @@ function StatCard({ icon: Icon, label, value, sub, tone = 'zinc' }) {
 
 function AdminDashboard({ analytics, projects, clientProjects, clients, onClick, onOpenWorkspace }) {
   if (!analytics) return <div className="text-sm text-zinc-500">Loading…</div>
+  const safeBySla = analytics.bySla || { ok: 0, warning: 0, breached: 0 }
+  const safeByStatus = analytics.byStatus || {}
+  const safeByClient = analytics.byClient || []
   const workspaceCount = analytics.totals.client_workspaces ?? analytics.totals.projects ?? 0
   const monthly = analytics.fieldJobsByMonth || []
   const weekly = analytics.fieldJobsByWeek || []
@@ -1484,23 +1487,23 @@ function AdminDashboard({ analytics, projects, clientProjects, clients, onClick,
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-4">
               <div className="text-xs text-emerald-300 mb-1">On track</div>
-              <div className="text-2xl font-mono">{analytics.bySla.ok}</div>
+              <div className="text-2xl font-mono">{safeBySla.ok}</div>
             </div>
             <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-4">
               <div className="text-xs text-amber-300 mb-1">Warning (&lt;4h)</div>
-              <div className="text-2xl font-mono">{analytics.bySla.warning}</div>
+              <div className="text-2xl font-mono">{safeBySla.warning}</div>
             </div>
             <div className="rounded-lg bg-red-500/10 border border-red-500/40 p-4">
               <div className="text-xs text-red-300 mb-1">Breached</div>
-              <div className="text-2xl font-mono">{analytics.bySla.breached}</div>
+              <div className="text-2xl font-mono">{safeBySla.breached}</div>
             </div>
           </div>
 
           <div className="mt-6">
             <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">By status</div>
             <div className="space-y-2">
-              {Object.entries(analytics.byStatus).map(([k, v]) => {
-                const total = Object.values(analytics.byStatus).reduce((a, b) => a + b, 0) || 1
+              {Object.entries(safeByStatus).map(([k, v]) => {
+                const total = Object.values(safeByStatus).reduce((a, b) => a + b, 0) || 1
                 const pct = (v / total) * 100
                 return (
                   <div key={k} className="flex items-center gap-3 text-sm">
@@ -1520,13 +1523,13 @@ function AdminDashboard({ analytics, projects, clientProjects, clients, onClick,
         <GlassCard className="p-5">
           <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Clients</div>
           <div className="space-y-2">
-            {analytics.byClient.map(c => (
+            {safeByClient.map(c => (
               <div key={c.id} className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />{c.name}</span>
                 <span className="font-mono text-zinc-400">{c.count}</span>
               </div>
             ))}
-            {analytics.byClient.length === 0 && <div className="text-xs text-zinc-600">No clients yet.</div>}
+            {safeByClient.length === 0 && <div className="text-xs text-zinc-600">No clients yet.</div>}
           </div>
         </GlassCard>
       </div>
