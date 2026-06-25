@@ -1017,10 +1017,15 @@ function AdminApp({ user, onLogout }) {
 
   async function refresh() {
     try {
-      const [p, c, u, a] = await Promise.all([
+      const [pRes, cRes, uRes, aRes] = await Promise.allSettled([
         api('/projects'), api('/clients'), api('/users'), api('/analytics'),
       ])
-      setProjects(p.projects); setClients(c.clients); setUsers(u.users); setAnalytics(a)
+      if (pRes.status === 'fulfilled') setProjects(pRes.value.projects || [])
+      if (cRes.status === 'fulfilled') setClients(cRes.value.clients || [])
+      if (uRes.status === 'fulfilled') setUsers(uRes.value.users || [])
+      if (aRes.status === 'fulfilled') setAnalytics(aRes.value)
+      const firstErr = [pRes, cRes, uRes, aRes].find(r => r.status === 'rejected')
+      if (firstErr) toast.error(firstErr.reason?.message || 'Some data failed to load')
       const cp = await api('/client-projects')
       setClientProjects(cp.projects || [])
       if (['assigned', 'pipeline'].includes(tab)) {
@@ -1055,6 +1060,10 @@ function AdminApp({ user, onLogout }) {
   useEffect(() => { if (tab === 'audit') loadAuditLogs().catch(() => {}) }, [tab])
   useEffect(() => { if (isSuperAdmin && tab === 'deletions') api('/deletion-requests').then(r => setDeletionRequests(r.requests)).catch(() => {}) }, [tab])
   useEffect(() => { if (isSuperAdmin && tab === 'bin') api('/recycle-bin').then(r => setRecycleItems(r.items || [])).catch(() => {}) }, [tab])
+  useEffect(() => {
+    if (tab !== 'users') return
+    api('/users').then(u => setUsers(u.users || [])).catch(e => toast.error(e.message))
+  }, [tab])
   useEffect(() => {
     if (!['assigned', 'pipeline'].includes(tab)) return
     refreshAssignedJobsOnly()
@@ -1696,6 +1705,9 @@ function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
       )}
       <GlassCard className="p-5">
         <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">All users</div>
+        {users.length === 0 && (
+          <div className="text-sm text-zinc-500 py-6 text-center">No users found. Try refreshing.</div>
+        )}
         <div className="space-y-2">
           {users.map(u => (
             <div key={u.id} className="flex items-center justify-between p-3 rounded-lg border border-zinc-800/60 bg-zinc-900/40">

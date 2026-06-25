@@ -584,20 +584,30 @@ async function handleRoute(request, context) {
     if (route === '/users' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
+      // Detect whether extended passkey columns exist (added in later migrations)
+      const extendedSelect = 'id, username, role, client_id, must_change_password, created_at, passcode_key_ext, passcode_key_created_at'
+      const baseSelect = 'id, username, role, client_id, must_change_password, created_at'
+      async function fetchUsers(query) {
+        let r = await query(extendedSelect)
+        if (r.error) r = await query(baseSelect)
+        return r.data || []
+      }
       // Super-Admin/Admin see all users; Client-Admin sees only their org's Client-Users
       if (INTERNAL_ROLES.includes(user.role)) {
-        const [{ data: users }, { data: clients }] = await Promise.all([
-          sb.from('users').select('id, username, role, client_id, must_change_password, created_at, passcode_key_ext, passcode_key_created_at').order('created_at', { ascending: false }),
+        const [users, { data: clients }] = await Promise.all([
+          fetchUsers(sel => sb.from('users').select(sel).order('created_at', { ascending: false })),
           sb.from('clients').select('id, name'),
         ])
         const cmap = Object.fromEntries((clients || []).map(c => [c.id, c.name]))
-        return json({ users: (users || []).map(u => ({ ...strip(u), client_name: cmap[u.client_id] || null })) })
+        return json({ users: users.map(u => ({ ...strip(u), client_name: cmap[u.client_id] || null })) })
       }
       if (user.role === CLIENT_ADMIN) {
-        const { data: users } = await sb.from('users').select('id, username, role, client_id, must_change_password, created_at, passcode_key_ext, passcode_key_created_at')
-          .eq('client_id', user.client_id).eq('role', CLIENT_USER)
-          .order('created_at', { ascending: false })
-        return json({ users: (users || []).map(u => strip(u)) })
+        const users = await fetchUsers(sel =>
+          sb.from('users').select(sel)
+            .eq('client_id', user.client_id).eq('role', CLIENT_USER)
+            .order('created_at', { ascending: false })
+        )
+        return json({ users: users.map(u => strip(u)) })
       }
       return json({ error: 'Forbidden' }, 403)
     }
