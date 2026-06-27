@@ -381,6 +381,48 @@ async function addJobComment(jobId, user, comment, stage = 'General') {
   invalidateCachedLists('jobs-assigned:')
 }
 
+async function sendExpoPushNotification({ to, title, body, data = {} }) {
+  if (!to) return
+  const tokens = Array.isArray(to) ? to : [to]
+  const messages = tokens
+    .filter(t => t && t.startsWith('ExponentPushToken['))
+    .map(token => ({
+      to: token,
+      sound: 'default',
+      title,
+      body,
+      data,
+      priority: 'high',
+      channelId: 'default',
+    }))
+  if (messages.length === 0) return
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Accept-Encoding': 'gzip, deflate' },
+      body: JSON.stringify(messages.length === 1 ? messages[0] : messages),
+    })
+  } catch (e) {
+    console.warn('[Push] Failed to send notification:', e.message)
+  }
+}
+
+async function notifyAssignedAdmin(assigneeId, jobTitle, projectId, createdByUsername) {
+  if (!assigneeId) return
+  try {
+    const { data: tokens } = await sb.from('push_tokens').select('token').eq('user_id', assigneeId)
+    if (!tokens || tokens.length === 0) return
+    await sendExpoPushNotification({
+      to: tokens.map(t => t.token),
+      title: '📋 New Job Card Assigned',
+      body: `"${jobTitle}" has been assigned to you by ${createdByUsername}`,
+      data: { projectId, screen: `/(app)/jobs/${projectId}` },
+    })
+  } catch (e) {
+    console.warn('[Push] notifyAssignedAdmin failed:', e.message)
+  }
+}
+
 async function moveToRecycleBin({ tableName, entityType, id, user, scope = null }) {
   let fetchQuery = sb.from(tableName).select('*').eq('id', id)
   if (scope?.field && scope?.value !== undefined) fetchQuery = fetchQuery.eq(scope.field, scope.value)
@@ -756,6 +798,32 @@ async function handleRoute(request, context) {
         await moveToRecycleBin({ tableName: 'users', entityType: 'user', id: req.target_user_id, user })
       }
       return json({ success: true })
+    }
+
+    // --- PUSH TOKENS (Mobile App Notifications) ---
+    if (route === '/push-tokens' && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+      const { token, device_name } = await request.json().catch(() => ({}))
+      if (!token) return json({ error: 'token required' }, 400)
+      // Upsert: same token updates device_name and user_id
+      const { error } = await sb.from('push_tokens').upsert({
+        id: uuidv4(),
+        user_id: user.id,
+        token: token.trim(),
+        device_name: device_name || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'token' })
+      if (error) return json({ error: error.message }, 500)
+      return json({ ok: true })
+    }
+
+    if (route.match(/^\/push-tokens\/[^/]+$/) && method === 'DELETE') {
+      const user = await getUserFromRequest(request)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+      const token = decodeURIComponent(route.split('/')[2])
+      await sb.from('push_tokens').delete().eq('token', token).eq('user_id', user.id)
+      return json({ ok: true })
     }
 
     if (route === '/recycle-bin' && method === 'GET') {
@@ -1629,6 +1697,8 @@ async function handleRoute(request, context) {
         invalidateCachedLists('jobs-assigned:')
         await addJobComment(data.id, user, 'Job card created', 'Created')
         if (comments?.trim()) await addJobComment(data.id, user, comments.trim(), 'Created')
+        // Fire push notification to assigned Admin (non-blocking)
+        notifyAssignedAdmin(assigneeId, insertPayload.title, projectId, user.username).catch(() => {})
         return json({ job: data }, 201)
       }
     }
