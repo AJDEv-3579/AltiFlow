@@ -881,6 +881,15 @@ async function handleRoute(request, context) {
       return json({ success: true })
     }
 
+    if (route.match(/^\/recycle-bin\/[^/]+$/) && method === 'DELETE') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
+      const id = route.split('/')[2]
+      const { error } = await sb.from('recycle_bin').delete().eq('id', id)
+      if (error) return json({ error: error.message }, 500)
+      return json({ success: true })
+    }
+
     // --- USER_PROJECTS (project assignment for Client-User) ---
     if (route.match(/^\/projects\/[^/]+\/assign-users$/) && method === 'POST') {
       const user = await getUserFromRequest(request)
@@ -1370,14 +1379,15 @@ async function handleRoute(request, context) {
       const payload = {
         jobs: (jobs || []).map(j => {
           const p = pMap[j.project_id]
+          const cat = j.category || 'Stand Count'
           const legacyStage = j.status === 'Blocked'
             ? 'Cancelled'
             : ((j.status === 'In Progress' || j.status === 'Done') ? j.status : 'Pending')
           return {
             ...j,
-            category: j.category || 'Stand Count',
-            sc_status: j.sc_status || legacyStage,
-            uni_status: j.uni_status || legacyStage,
+            category: cat,
+            sc_status: cat === 'Uniformity' ? 'Yet to Upload' : (j.sc_status || legacyStage),
+            uni_status: cat === 'Stand Count' ? 'Yet to Upload' : (j.uni_status || legacyStage),
             project_name: p?.name || null,
             project_type: p?.type || null,
             client_name: p?.client_id ? (cMap[p.client_id] || null) : null,
@@ -1542,15 +1552,19 @@ async function handleRoute(request, context) {
           if (!commentsByJob[c.job_id]) commentsByJob[c.job_id] = []
           if (commentsByJob[c.job_id].length < commentLimit) commentsByJob[c.job_id].push(c)
         }
-        const jobs = (data || []).map(j => ({
-          ...j,
-          category: j.category || 'Stand Count',
-          sc_status: j.sc_status || (j.status === 'Blocked' ? 'Cancelled' : (j.status === 'Open' ? 'Pending' : j.status)),
-          uni_status: j.uni_status || (j.status === 'Blocked' ? 'Cancelled' : (j.status === 'Open' ? 'Pending' : j.status)),
-          assigned_to_name: j.assigned_user?.username || null,
-          created_by_name: j.creator?.username || null,
-          comments_log: commentsByJob[j.id] || [],
-        }))
+        const jobs = (data || []).map(j => {
+          const cat = j.category || 'Stand Count'
+          const fallback = j.status === 'Blocked' ? 'Cancelled' : (j.status === 'Open' ? 'Pending' : j.status)
+          return {
+            ...j,
+            category: cat,
+            sc_status: cat === 'Uniformity' ? 'Yet to Upload' : (j.sc_status || fallback),
+            uni_status: cat === 'Stand Count' ? 'Yet to Upload' : (j.uni_status || fallback),
+            assigned_to_name: j.assigned_user?.username || null,
+            created_by_name: j.creator?.username || null,
+            comments_log: commentsByJob[j.id] || [],
+          }
+        })
         const payload = { jobs, page, limit, comment_limit: commentLimit }
         setCachedList(cacheKey, payload)
         return json(payload)
@@ -1562,7 +1576,6 @@ async function handleRoute(request, context) {
         if (!title?.trim()) return json({ error: 'Title required' }, 400)
         if (!capture_date)   return json({ error: 'Capture date required' }, 400)
         if (!drone_name?.trim()) return json({ error: 'Drone name required' }, 400)
-        if (!comments?.trim()) return json({ error: 'Comments are required' }, 400)
         const VALID_CATS = ['Stand Count', 'Uniformity']
         if (category && !VALID_CATS.includes(category)) return json({ error: 'Invalid category' }, 400)
         if (!flight_count || parseInt(flight_count, 10) < 1) return json({ error: 'Flight count required' }, 400)
@@ -1693,6 +1706,7 @@ async function handleRoute(request, context) {
         invalidateCachedLists('jobs-by-project:')
         invalidateCachedLists('jobs-assigned:')
 
+        /*
         if (allowed.status && allowed.status !== currentJob.status) {
           await addJobComment(jobId, user, `Overall status changed: ${currentJob.status || 'Open'} -> ${allowed.status}`, 'Status')
         }
@@ -1702,6 +1716,7 @@ async function handleRoute(request, context) {
         if (allowed.uni_status && allowed.uni_status !== currentJob.uni_status) {
           await addJobComment(jobId, user, `Uniformity stage: ${currentJob.uni_status || 'Pending'} -> ${allowed.uni_status}`, 'Uniformity')
         }
+        */
         if (body.pipeline_comment?.trim()) {
           await addJobComment(jobId, user, body.pipeline_comment.trim(), body.pipeline_stage || 'General')
         }

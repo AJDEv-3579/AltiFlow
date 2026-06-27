@@ -35,7 +35,7 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) }
   const t = getToken()
   if (t) headers.Authorization = `Bearer ${t}`
-  const res = await fetch(`/api${path}`, { ...opts, headers })
+  const res = await fetch(`/api${path}`, { cache: 'no-store', ...opts, headers })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
   return data
@@ -295,12 +295,11 @@ function Login({ onLogin }) {
     <div className="min-h-screen flex items-center justify-center px-4 relative">
       <Backdrop />
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="w-full max-w-md relative z-10">
-        <div className="text-center mb-8">
-          <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="inline-flex items-center gap-2 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 via-violet-500 to-emerald-500 flex items-center justify-center">
-              <Plane className="text-white" size={20} />
-            </div>
-            <div className="text-3xl font-bold tracking-tight">Altiflow</div>
+        <div className="text-center mb-8 flex flex-col items-center">
+          <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="mb-3">
+            <h1 className="text-4xl font-black tracking-tight bg-gradient-to-r from-blue-400 via-violet-400 to-emerald-400 bg-clip-text text-transparent select-none">
+              Altiflow
+            </h1>
           </motion.div>
           <div className="text-sm text-zinc-400">UAV Project Management & Operations, Simplified</div>
         </div>
@@ -947,11 +946,12 @@ function Topbar({ user, onLogout, title, subtitle }) {
     <div className="sticky top-0 z-30 glass-strong border-b border-zinc-800/60">
       <div className="px-4 md:px-8 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 via-violet-500 to-emerald-500 flex items-center justify-center shrink-0">
-            <Plane className="text-white" size={16} />
+          <div className="flex items-center shrink-0 select-none">
+            <span className="font-extrabold tracking-tight text-lg bg-gradient-to-r from-blue-400 via-violet-400 to-emerald-400 bg-clip-text text-transparent">Altiflow</span>
           </div>
+          <div className="h-5 w-[1px] bg-zinc-800/60 hidden sm:block shrink-0" />
           <div className="min-w-0">
-            <div className="font-semibold truncate">{title || 'Altiflow'}</div>
+            <div className="font-semibold truncate text-zinc-100">{title || 'Altiflow'}</div>
             {subtitle && <div className="text-[11px] text-zinc-500 truncate">{subtitle}</div>}
           </div>
         </div>
@@ -1085,8 +1085,6 @@ function AdminApp({ user, onLogout }) {
         method: 'PATCH',
         body: JSON.stringify({
           [stageField]: dbStage,
-          pipeline_stage: card.category || 'General',
-          pipeline_comment: `Moved from Pipeline to ${target}`,
         }),
       })
       toast.success(`Job moved → ${target}`)
@@ -1800,6 +1798,7 @@ function DeletionQueueTab({ requests, onRefresh }) {
 
 function RecycleBinTab({ items, onRefresh }) {
   const [restoring, setRestoring] = useState(null)
+  const [deleting, setDeleting] = useState(null)
 
   async function restoreItem(id) {
     setRestoring(id)
@@ -1811,6 +1810,20 @@ function RecycleBinTab({ items, onRefresh }) {
       toast.error(e.message)
     } finally {
       setRestoring(null)
+    }
+  }
+
+  async function deleteItem(id) {
+    if (!confirm('Are you sure you want to delete this permanently? This action cannot be undone.')) return
+    setDeleting(id)
+    try {
+      await api(`/recycle-bin/${id}`, { method: 'DELETE' })
+      toast.success('Item permanently deleted')
+      onRefresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setDeleting(null)
     }
   }
 
@@ -1836,14 +1849,26 @@ function RecycleBinTab({ items, onRefresh }) {
                   </div>
                 )}
               </div>
-              <Btn
-                variant="ghost"
-                size="sm"
-                disabled={restored || restoring === item.id}
-                onClick={() => restoreItem(item.id)}
-              >
-                {restored ? 'Restored' : restoring === item.id ? 'Restoring...' : 'Restore'}
-              </Btn>
+              <div className="flex items-center gap-2 shrink-0">
+                <Btn
+                  variant="ghost"
+                  size="sm"
+                  disabled={restored || restoring === item.id || deleting === item.id}
+                  onClick={() => restoreItem(item.id)}
+                >
+                  {restored ? 'Restored' : restoring === item.id ? 'Restoring...' : 'Restore'}
+                </Btn>
+                {!restored && (
+                  <Btn
+                    variant="danger"
+                    size="sm"
+                    disabled={restoring === item.id || deleting === item.id}
+                    onClick={() => deleteItem(item.id)}
+                  >
+                    {deleting === item.id ? 'Deleting...' : 'Delete'}
+                  </Btn>
+                )}
+              </div>
             </div>
           )
         })}
@@ -1960,11 +1985,11 @@ function WelcomeScreen({ user }) {
         transition={{ duration: 0.6, ease: 'easeOut' }}
         className="text-center relative z-10 px-6"
       >
-        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.5 }} className="mb-6">
-          <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-blue-500 via-violet-500 to-emerald-500 flex items-center justify-center shadow-2xl"
-            style={{ boxShadow: `0 0 60px ${meta.glow}` }}>
-            <Plane className="text-white" size={36} />
-          </div>
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.5 }} className="mb-6 flex justify-center select-none">
+          <span className="text-4xl font-black tracking-tight bg-gradient-to-r from-blue-400 via-violet-400 to-emerald-400 bg-clip-text text-transparent"
+            style={{ textShadow: `0 0 40px rgba(99,102,241,0.2)` }}>
+            Altiflow
+          </span>
         </motion.div>
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4, duration: 0.5 }}>
           <div className="text-4xl font-bold tracking-tight mb-2">Welcome back,</div>
@@ -2527,7 +2552,6 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
     if (!form.title.trim()) missingItems.push('Field Name')
     if (!form.capture_date) missingItems.push('Date of Capture')
     if (!form.drone_name.trim()) missingItems.push('Drone Name')
-    if (!form.comments.trim()) missingItems.push('Comments')
     const missingFlights = form.flights
       .map((f, idx) => ({ idx, missing: f.image_count === null }))
       .filter(x => x.missing)
@@ -2563,9 +2587,8 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
     title: submitted && !form.title.trim(),
     capture: submitted && !form.capture_date,
     drone: submitted && !form.drone_name.trim(),
-    comments: submitted && !form.comments.trim(),
   }
-  const valid = form.title.trim() && form.capture_date && form.drone_name.trim() && form.comments.trim() && !form.flights.some(f => f.image_count === null)
+  const valid = form.title.trim() && form.capture_date && form.drone_name.trim() && !form.flights.some(f => f.image_count === null)
   const fieldErrorCls = hasError => hasError ? 'border-red-500/70 focus:border-red-400' : ''
 
   return (
@@ -2689,7 +2712,7 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
         </label>
 
         {/* Comments */}
-        <Field label="Comments *">
+        <Field label="Comments">
           <textarea value={form.comments} onChange={e => setForm(f => ({ ...f, comments: e.target.value }))} rows={2}
             placeholder="Any notes about this field capture…"
             className={`w-full bg-zinc-900/60 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none ${fieldErrorCls(missing.comments)}`} />
@@ -2889,6 +2912,21 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
     return true
   })
 
+  const groupedByDay = useMemo(() => {
+    const groups = {}
+    for (const job of filteredJobs) {
+      const dateKey = new Date(job.created_at).toLocaleDateString(undefined, {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      })
+      if (!groups[dateKey]) groups[dateKey] = []
+      groups[dateKey].push(job)
+    }
+    return Object.keys(groups).sort((a, b) => new Date(b) - new Date(a)).map(date => ({
+      date,
+      jobs: groups[date]
+    }))
+  }, [filteredJobs])
+
   const canDelete = ['Client-Admin', 'Super-Admin'].includes(user.role)
   const canRequestDelete = ['Admin', 'Client-User'].includes(user.role)
 
@@ -2934,7 +2972,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
               project={project}
               orgUsers={orgUsers}
               canAssignManual={isAdmin}
-              onDone={() => { setShowAdd(false); onRefresh() }}
+              onDone={() => { setShowAdd(false); onRefresh(project.id, { useCache: false }) }}
               onCancel={() => setShowAdd(false)}
             />
           </motion.div>
@@ -2950,204 +2988,234 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        <AnimatePresence>
-          {filteredJobs.map(job => {
-            const isOpen = expanded === job.id
-            const flights = Array.isArray(job.flights) ? job.flights : []
-            const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
-            const totalCSV    = flights.reduce((s, f) => s + (f.csv_rows    || 0), 0)
-            return (
-              <motion.div key={job.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
-                <GlassCard className="overflow-hidden">
-                  {/* Card header — click to expand */}
-                  <button type="button" onClick={() => setExpanded(isOpen ? null : job.id)}
-                    className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors">
-                    <div className="flex items-start justify-between gap-3">
-                      {/* Left: field info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-zinc-100">{job.title}</span>
-                          {job.category && (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
-                              job.category === 'Uniformity'
-                                ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
-                                : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
-                              {job.category}
-                            </span>
-                          )}
-                          {job.has_logs && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-medium">Logs</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 mt-1.5 flex-wrap text-[11px] text-zinc-500">
-                          {job.drone_name && (
-                            <span className="flex items-center gap-1"><Plane size={10} />{job.drone_name}</span>
-                          )}
-                          {job.capture_date && (
-                            <span className="flex items-center gap-1">
-                              <Calendar size={10} />Captured {new Date(job.capture_date + 'T00:00:00').toLocaleDateString()}
-                            </span>
-                          )}
-                          <span className="flex items-center gap-1">
-                            <Clock size={10} />Uploaded {new Date(job.created_at).toLocaleDateString()}
-                          </span>
-                          {job.assigned_to_name && (
-                            <span className="flex items-center gap-1"><User size={10} />{job.assigned_to_name}</span>
-                          )}
-                        </div>
-                        {flights.length > 0 && (
-                          <div className="flex items-center gap-3 mt-1.5 text-[11px]">
-                            <span className="text-zinc-600">{flights.length} flight{flights.length !== 1 ? 's' : ''}</span>
-                            {totalImages > 0 && (
-                              <span className="text-blue-400 flex items-center gap-1">
-                                <Camera size={9} />{totalImages.toLocaleString()} images
-                              </span>
-                            )}
-                            {totalCSV > 0 && (
-                              <span className="text-emerald-400 flex items-center gap-1">
-                                <FileCheck size={9} />{totalCSV.toLocaleString()} CSV rows
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {/* Right: single status for the job's category (read-only) */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        {(() => {
-                          const stValue = activeStage(job)
-                          return (
-                            <>
-                              <span className={stageCls(stValue)}>{stValue}</span>
-                            </>
-                          )
-                        })()}
-                      </div>
-                    </div>
-                  </button>
-
-                  {/* Expanded detail panel */}
-                  <AnimatePresence>
-                    {isOpen && (
-                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-                        <div className="border-t border-zinc-800/60 px-4 py-4 space-y-4">
-                          {/* Per-flight breakdown table */}
-                          {flights.length > 0 && (
-                            <div>
-                              <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-2">Flight Breakdown</div>
-                              <div className="rounded-lg overflow-hidden border border-zinc-800/60">
-                                <div className="grid grid-cols-3 bg-zinc-900/60 text-[10px] uppercase tracking-wider text-zinc-600 px-3 py-2">
-                                  <span>Flight</span><span className="text-center">Images</span><span className="text-center">CSV Rows</span>
-                                </div>
-                                {flights.map((fl, i) => (
-                                  <div key={i} className="grid grid-cols-3 px-3 py-2.5 border-t border-zinc-800/40 text-sm">
-                                    <span className="text-zinc-400 text-xs">Flight {i + 1}</span>
-                                    <span className={`text-center font-mono text-xs ${fl.image_count != null ? 'text-blue-300' : 'text-zinc-600'}`}>
-                                      {fl.image_count != null ? fl.image_count.toLocaleString() : '—'}
-                                    </span>
-                                    <span className={`text-center font-mono text-xs ${fl.csv_rows != null ? 'text-emerald-300' : 'text-zinc-600'}`}>
-                                      {fl.csv_rows != null ? fl.csv_rows.toLocaleString() : '—'}
-                                    </span>
-                                  </div>
-                                ))}
-                                {flights.length > 1 && (
-                                  <div className="grid grid-cols-3 px-3 py-2.5 border-t border-zinc-700/60 bg-zinc-900/30 text-xs font-semibold">
-                                    <span className="text-zinc-500">Total</span>
-                                    <span className="text-center font-mono text-blue-300">{totalImages.toLocaleString()}</span>
-                                    <span className="text-center font-mono text-emerald-300">{totalCSV.toLocaleString()}</span>
-                                  </div>
+      <div className="space-y-6">
+        {groupedByDay.map(group => (
+          <div key={group.date} className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-zinc-400 tracking-wide uppercase">{group.date}</span>
+              <div className="h-[1px] bg-zinc-800/40 flex-1" />
+              <span className="text-[10px] text-zinc-500 font-mono font-medium bg-zinc-900/60 border border-zinc-800/60 px-1.5 py-0.5 rounded">
+                {group.jobs.length} card{group.jobs.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <AnimatePresence>
+                {group.jobs.map(job => {
+                  const isOpen = expanded === job.id
+                  const flights = Array.isArray(job.flights) ? job.flights : []
+                  const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
+                  const totalCSV    = flights.reduce((s, f) => s + (f.csv_rows    || 0), 0)
+                  return (
+                    <motion.div key={job.id} className="h-full" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
+                      <GlassCard className="overflow-hidden h-full flex flex-col justify-between">
+                        {/* Card header — click to expand */}
+                        <button type="button" onClick={() => setExpanded(isOpen ? null : job.id)}
+                          className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors">
+                          <div className="flex items-start justify-between gap-3">
+                            {/* Left: field info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-zinc-100">{job.title}</span>
+                                {job.category && (
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                                    job.category === 'Uniformity'
+                                      ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                                      : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
+                                    {job.category}
+                                  </span>
+                                )}
+                                {job.has_logs && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-medium">Logs</span>
                                 )}
                               </div>
-                            </div>
-                          )}
-
-                          {/* Comments */}
-                          {job.comments && (
-                            <div>
-                              <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1.5">Comments</div>
-                              <div className="text-sm text-zinc-300 bg-zinc-900/40 rounded-lg px-3 py-2.5 border border-zinc-800/60 leading-relaxed">
-                                {job.comments}
+                              <div className="flex items-center gap-3 mt-1.5 flex-wrap text-[11px] text-zinc-500">
+                                {job.drone_name && (
+                                  <span className="flex items-center gap-1"><Plane size={10} />{job.drone_name}</span>
+                                )}
+                                {job.capture_date && (
+                                  <span className="flex items-center gap-1">
+                                    <Calendar size={10} />Captured {new Date(job.capture_date + 'T00:00:00').toLocaleDateString()}
+                                  </span>
+                                )}
+                                <span className="flex items-center gap-1">
+                                  <Clock size={10} />Uploaded {new Date(job.created_at).toLocaleDateString()}
+                                </span>
+                                {job.assigned_to_name && (
+                                  <span className="flex items-center gap-1"><User size={10} />{job.assigned_to_name}</span>
+                                )}
                               </div>
-                            </div>
-                          )}
-
-                          <div>
-                            <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1.5">Pipeline Comment Timeline</div>
-                            <div className="space-y-2 max-h-44 overflow-auto pr-1">
-                              {(job.comments_log || []).length === 0 && (
-                                <div className="text-xs text-zinc-600">No stage updates yet.</div>
+                              {flights.length > 0 && (
+                                <div className="flex items-center gap-3 mt-1.5 text-[11px]">
+                                  <span className="text-zinc-600">{flights.length} flight{flights.length !== 1 ? 's' : ''}</span>
+                                  {totalImages > 0 && (
+                                    <span className="text-blue-400 flex items-center gap-1">
+                                      <Camera size={9} />{totalImages.toLocaleString()} images
+                                    </span>
+                                  )}
+                                  {totalCSV > 0 && (
+                                    <span className="text-emerald-400 flex items-center gap-1">
+                                      <FileCheck size={9} />{totalCSV.toLocaleString()} CSV rows
+                                    </span>
+                                  )}
+                                </div>
                               )}
-                              {(job.comments_log || []).map(c => (
-                                <div key={c.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/30 px-3 py-2">
-                                  <div className="flex items-center justify-between gap-3 text-[10px] text-zinc-500">
-                                    <span>{c.username || 'system'} · {c.stage || 'General'}</span>
-                                    <span>{new Date(c.created_at).toLocaleString()}</span>
+                            </div>
+                            {/* Right: single status for the job's category (read-only) */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              {(() => {
+                                const stValue = activeStage(job)
+                                return (
+                                  <>
+                                    <span className={stageCls(stValue)}>{stValue}</span>
+                                  </>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* Expanded detail panel */}
+                        <AnimatePresence>
+                          {isOpen && (
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+                              <div className="border-t border-zinc-800/60 px-4 py-4 space-y-4">
+                                {/* Per-flight breakdown table */}
+                                {flights.length > 0 && (
+                                  <div>
+                                    <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-2">Flight Breakdown</div>
+                                    <div className="rounded-lg overflow-hidden border border-zinc-800/60">
+                                      <div className="grid grid-cols-3 bg-zinc-900/60 text-[10px] uppercase tracking-wider text-zinc-600 px-3 py-2">
+                                        <span>Flight</span><span className="text-center">Images</span><span className="text-center">CSV Rows</span>
+                                      </div>
+                                      {flights.map((fl, i) => (
+                                        <div key={i} className="grid grid-cols-3 px-3 py-2.5 border-t border-zinc-800/40 text-sm">
+                                          <span className="text-zinc-400 text-xs">Flight {i + 1}</span>
+                                          <span className={`text-center font-mono text-xs ${fl.image_count != null ? 'text-blue-300' : 'text-zinc-600'}`}>
+                                            {fl.image_count != null ? fl.image_count.toLocaleString() : '—'}
+                                          </span>
+                                          <span className={`text-center font-mono text-xs ${fl.csv_rows != null ? 'text-emerald-300' : 'text-zinc-600'}`}>
+                                            {fl.csv_rows != null ? fl.csv_rows.toLocaleString() : '—'}
+                                          </span>
+                                        </div>
+                                      ))}
+                                      {flights.length > 1 && (
+                                        <div className="grid grid-cols-3 px-3 py-2.5 border-t border-zinc-700/60 bg-zinc-900/30 text-xs font-semibold">
+                                          <span className="text-zinc-500">Total</span>
+                                          <span className="text-center font-mono text-blue-300">{totalImages.toLocaleString()}</span>
+                                          <span className="text-center font-mono text-emerald-300">{totalCSV.toLocaleString()}</span>
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="text-xs text-zinc-300 mt-1 whitespace-pre-wrap">{c.comment}</div>
-                                </div>
-                              ))}
-                            </div>
+                                )}
 
-                            <div className="mt-2 flex gap-2">
-                              <textarea
-                                value={commentDrafts[job.id] || ''}
-                                onChange={e => setCommentDrafts(prev => ({ ...prev, [job.id]: e.target.value }))}
-                                rows={2}
-                                placeholder="Add stage update comment..."
-                                className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none"
-                              />
-                              <Btn
-                                size="sm"
-                                onClick={() => addPipelineComment(job.id)}
-                                disabled={commentBusy === job.id || !(commentDrafts[job.id] || '').trim()}
-                              >
-                                {commentBusy === job.id ? 'Saving...' : 'Add'}
-                              </Btn>
-                            </div>
-                          </div>
+                                {/* Comments */}
+                                {(job.comments || job.description) && (
+                                  <div>
+                                    <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1.5">Comments</div>
+                                    <div className="text-sm text-zinc-300 bg-zinc-900/40 rounded-lg px-3 py-2.5 border border-zinc-800/60 leading-relaxed">
+                                      {job.comments || job.description}
+                                    </div>
+                                  </div>
+                                )}
 
-                          {/* Footer */}
-                          <div className="flex items-center justify-between text-[11px] text-zinc-600 pt-1 gap-3 flex-wrap">
-                            <div className="flex items-center gap-3 flex-wrap">
-                              <span>Submitted by {job.created_by_name || 'unknown'}</span>
-                              {isAdmin && adminAssignees.length > 0 && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-zinc-500">Assigned to</span>
-                                  <select
-                                    value={job.assigned_to || ''}
-                                    onChange={e => updateStage(job.id, 'assigned_to', e.target.value || null)}
-                                    disabled={updating === job.id + 'assigned_to'}
-                                    className="h-7 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2 text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-600"
-                                  >
-                                    <option value="">Unassigned</option>
-                                    {adminAssignees.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-                                  </select>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1.5">Pipeline Comment Timeline</div>
+                                  <div className="space-y-2 max-h-44 overflow-auto pr-1">
+                                    {(job.comments_log || []).length === 0 && (
+                                      <div className="text-xs text-zinc-600">No stage updates yet.</div>
+                                    )}
+                                    {(job.comments_log || []).map(c => (
+                                      <div key={c.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/30 px-3 py-2">
+                                        <div className="flex items-center justify-between gap-3 text-[10px] text-zinc-500">
+                                          <span>{c.username || 'system'} · {c.stage || 'General'}</span>
+                                          <span>{new Date(c.created_at).toLocaleString()}</span>
+                                        </div>
+                                        <div className="text-xs text-zinc-300 mt-1 whitespace-pre-wrap">{c.comment}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  <div className="mt-2 flex gap-2">
+                                    <textarea
+                                      value={commentDrafts[job.id] || ''}
+                                      onChange={e => setCommentDrafts(prev => ({ ...prev, [job.id]: e.target.value }))}
+                                      rows={2}
+                                      placeholder="Add stage update comment..."
+                                      className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none"
+                                    />
+                                    <Btn
+                                      size="sm"
+                                      onClick={() => addPipelineComment(job.id)}
+                                      disabled={commentBusy === job.id || !(commentDrafts[job.id] || '').trim()}
+                                    >
+                                      {commentBusy === job.id ? 'Saving...' : 'Add'}
+                                    </Btn>
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                            {canDelete && (
-                              <button onClick={() => deleteJob(job.id)}
-                                className="flex items-center gap-1.5 text-red-400 hover:text-red-300 transition-colors">
-                                <Trash2 size={12} /> Delete
-                              </button>
-                            )}
-                            {canRequestDelete && (
-                              <button onClick={() => requestDeleteJob(job)}
-                                className="flex items-center gap-1.5 text-amber-300 hover:text-amber-200 transition-colors">
-                                <FileWarning size={12} /> Request Delete
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </GlassCard>
-              </motion.div>
-            )
-          })}
-        </AnimatePresence>
+
+                                {/* Footer */}
+                                <div className="flex items-center justify-between text-[11px] text-zinc-600 pt-1 gap-3 flex-wrap">
+                                  <div className="flex items-center gap-3 flex-wrap">
+                                    <span>Submitted by {job.created_by_name || 'unknown'}</span>
+                                    {isAdmin && adminAssignees.length > 0 && (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-zinc-500">Assigned to</span>
+                                        <select
+                                          value={job.assigned_to || ''}
+                                          onChange={e => updateStage(job.id, 'assigned_to', e.target.value || null)}
+                                          disabled={updating === job.id + 'assigned_to'}
+                                          className="h-7 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2 text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-600"
+                                        >
+                                          <option value="">Unassigned</option>
+                                          {adminAssignees.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                                        </select>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-zinc-500">Stage</span>
+                                      <select
+                                        value={job.category === 'Uniformity' ? toUiJobStage(job.uni_status) : toUiJobStage(job.sc_status)}
+                                        onChange={e => {
+                                          const stageField = job.category === 'Uniformity' ? 'uni_status' : 'sc_status'
+                                          updateStage(job.id, stageField, toDbJobStage(e.target.value))
+                                        }}
+                                        disabled={updating === job.id + 'uni_status' || updating === job.id + 'sc_status'}
+                                        className="h-7 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2 text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
+                                      >
+                                        <option value="Pending">Pending</option>
+                                        <option value="In Progress">In Progress</option>
+                                        <option value="Done">Done</option>
+                                        <option value="Cancelled">Cancelled</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  {canDelete && (
+                                    <button onClick={() => deleteJob(job.id)}
+                                      className="flex items-center gap-1.5 text-red-400 hover:text-red-300 transition-colors">
+                                      <Trash2 size={12} /> Delete
+                                    </button>
+                                  )}
+                                  {canRequestDelete && (
+                                    <button onClick={() => requestDeleteJob(job)}
+                                      className="flex items-center gap-1.5 text-amber-300 hover:text-amber-200 transition-colors">
+                                      <FileWarning size={12} /> Request Delete
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </GlassCard>
+                    </motion.div>
+                  )
+                })}
+              </AnimatePresence>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -3176,6 +3244,13 @@ function StageChip({ status }) {
 }
 
 function ProjectTrackerTab({ project, jobs, canExport }) {
+  const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('all')
+  const [stageFilter, setStageFilter] = useState('all')
+  const [assigneeFilter, setAssigneeFilter] = useState('all')
+  const [sortColumn, setSortColumn] = useState('field_name')
+  const [sortDirection, setSortDirection] = useState('asc')
+
   function fmtDate(value) {
     if (!value) return '-'
     const d = new Date(value)
@@ -3191,72 +3266,99 @@ function ProjectTrackerTab({ project, jobs, canExport }) {
   }
 
   const rows = useMemo(() => {
-    const map = new Map()
+    const list = []
     for (const j of (jobs || [])) {
-      const key = `${(j.title || '').trim().toLowerCase()}|${j.capture_date || ''}`
-      if (!map.has(key)) {
-        map.set(key, {
-          field_name: j.title || 'Untitled',
-          stand: {
-            captured_date: '-',
-            uploaded_date: '-',
-            uploaded_by: '-',
-            assigned_to: '-',
-            stage: 'Pending',
-            delivery_date: '-',
-          },
-          uniformity: {
-            captured_date: '-',
-            uploaded_date: '-',
-            uploaded_by: '-',
-            assigned_to: '-',
-            stage: 'Yet to Upload',
-            delivery_date: '-',
-          },
-        })
-      }
-      const row = map.get(key)
-
-      const target = (j.category || 'Stand Count') === 'Uniformity' ? row.uniformity : row.stand
-      const stage = (j.category || 'Stand Count') === 'Uniformity'
-        ? (j.uni_status || 'Pending')
-        : (j.sc_status || 'Pending')
-
-      target.captured_date = fmtDate(j.capture_date)
-      target.uploaded_date = fmtDateTime(j.created_at)
-      target.uploaded_by = j.created_by_name || '-'
-      target.assigned_to = j.assigned_to_name || 'Unassigned'
-      target.stage = stage
-      target.delivery_date = stage === 'Done' ? fmtDate(j.updated_at || j.created_at) : '-'
+      const cat = j.category || 'Stand Count'
+      const rawStage = cat === 'Uniformity' ? (j.uni_status || 'Pending') : (j.sc_status || 'Pending')
+      const stage = toUiJobStage(rawStage === 'Blocked' ? 'Cancelled' : rawStage)
+      list.push({
+        id: j.id,
+        field_name: j.title || 'Untitled',
+        category: cat,
+        captured_date: fmtDate(j.capture_date),
+        uploaded_date: fmtDateTime(j.created_at),
+        uploaded_by: j.created_by_name || '-',
+        assigned_to: j.assigned_to_name || 'Unassigned',
+        stage: stage,
+        delivery_date: stage === 'Done' ? fmtDate(j.updated_at || j.created_at) : '-',
+      })
     }
-    return Array.from(map.values()).sort((a, b) => a.field_name.localeCompare(b.field_name))
+    return list
   }, [jobs])
 
-  function trackerRows() {
-    return rows.map(r => [
+  const assigneeOptions = useMemo(() => {
+    const vals = new Set()
+    for (const r of rows) {
+      if (r.assigned_to && r.assigned_to !== 'Unassigned' && r.assigned_to !== '-') {
+        vals.add(r.assigned_to)
+      }
+    }
+    return [...vals].sort((a, b) => a.localeCompare(b))
+  }, [rows])
+
+  const filteredRows = useMemo(() => {
+    return rows.filter(r => {
+      if (search.trim()) {
+        const q = search.toLowerCase()
+        if (!r.field_name.toLowerCase().includes(q) && !r.assigned_to.toLowerCase().includes(q)) return false
+      }
+      if (categoryFilter !== 'all') {
+        if (r.category !== categoryFilter) return false
+      }
+      if (stageFilter !== 'all') {
+        if (r.stage !== stageFilter) return false
+      }
+      if (assigneeFilter !== 'all') {
+        if (r.assigned_to !== assigneeFilter) return false
+      }
+      return true
+    })
+  }, [rows, search, categoryFilter, stageFilter, assigneeFilter])
+
+  const sortedRows = useMemo(() => {
+    const list = [...filteredRows]
+    list.sort((a, b) => {
+      let valA = a[sortColumn] || ''
+      let valB = b[sortColumn] || ''
+      if (typeof valA === 'string') valA = valA.toLowerCase()
+      if (typeof valB === 'string') valB = valB.toLowerCase()
+      if (valA < valB) return sortDirection === 'asc' ? -1 : 1
+      if (valA > valB) return sortDirection === 'asc' ? 1 : -1
+      return 0
+    })
+    return list
+  }, [filteredRows, sortColumn, sortDirection])
+
+  function handleSort(col) {
+    if (sortColumn === col) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColumn(col)
+      setSortDirection('asc')
+    }
+  }
+
+  function SortIcon({ col }) {
+    if (sortColumn !== col) return <span className="text-zinc-600 ml-1">↕</span>
+    return sortDirection === 'asc' ? <span className="text-zinc-300 ml-1">▲</span> : <span className="text-zinc-300 ml-1">▼</span>
+  }
+
+  function trackerRows(items) {
+    return items.map(r => [
       `"${(r.field_name || '').replace(/"/g, '""')}"`,
-      r.stand.captured_date,
-      r.stand.uploaded_date,
-      `"${(r.stand.uploaded_by || '').replace(/"/g, '""')}"`,
-      `"${(r.stand.assigned_to || '').replace(/"/g, '""')}"`,
-      r.stand.stage,
-      r.stand.delivery_date,
-      r.uniformity.captured_date,
-      r.uniformity.uploaded_date,
-      `"${(r.uniformity.uploaded_by || '').replace(/"/g, '""')}"`,
-      `"${(r.uniformity.assigned_to || '').replace(/"/g, '""')}"`,
-      r.uniformity.stage,
-      r.uniformity.delivery_date,
+      `"${(r.category || '').replace(/"/g, '""')}"`,
+      r.captured_date,
+      r.uploaded_date,
+      `"${(r.uploaded_by || '').replace(/"/g, '""')}"`,
+      `"${(r.assigned_to || '').replace(/"/g, '""')}"`,
+      r.stage,
+      r.delivery_date,
     ])
   }
 
   function downloadCSV() {
-    const headers = [
-      'Field Name',
-      'SC Captured Date', 'SC Uploaded Date', 'SC Uploaded By', 'SC Assigned To', 'SC Staged', 'SC Delivery Date',
-      'UNI Captured Date', 'UNI Uploaded Date', 'UNI Uploaded By', 'UNI Assigned To', 'UNI Staged', 'UNI Delivery Date',
-    ]
-    const csv = [headers.join(','), ...trackerRows().map(r => r.join(','))].join('\n')
+    const headers = ['Field Name', 'Category', 'Captured Date', 'Uploaded Date', 'Uploaded By', 'Assigned To', 'Staged', 'Delivery Date']
+    const csv = [headers.join(','), ...trackerRows(sortedRows).map(r => r.join(','))].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -3268,16 +3370,12 @@ function ProjectTrackerTab({ project, jobs, canExport }) {
   }
 
   function downloadExcel() {
-    const headers = [
-      'Field Name',
-      'SC Captured Date', 'SC Uploaded Date', 'SC Uploaded By', 'SC Assigned To', 'SC Staged', 'SC Delivery Date',
-      'UNI Captured Date', 'UNI Uploaded Date', 'UNI Uploaded By', 'UNI Assigned To', 'UNI Staged', 'UNI Delivery Date',
-    ]
-    const rows = trackerRows().map(r => r.map(v => String(v || '').replace(/^"|"$/g, '')))
+    const headers = ['Field Name', 'Category', 'Captured Date', 'Uploaded Date', 'Uploaded By', 'Assigned To', 'Staged', 'Delivery Date']
+    const dataRows = trackerRows(sortedRows).map(r => r.map(v => String(v || '').replace(/^"|"$/g, '')))
     const table = `
       <table border="1">
         <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-        <tbody>${rows.map(r => `<tr>${r.map(v => `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody>
+        <tbody>${dataRows.map(r => `<tr>${r.map(v => `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody>
       </table>
     `
     const blob = new Blob([table], { type: 'application/vnd.ms-excel' })
@@ -3291,33 +3389,33 @@ function ProjectTrackerTab({ project, jobs, canExport }) {
   }
 
   function downloadPDF() {
+    const headers = ['Field Name', 'Category', 'Captured Date', 'Uploaded Date', 'Uploaded By', 'Assigned To', 'Staged', 'Delivery Date']
     const html = `
       <html><head><title>${project.name} Tracker</title>
       <style>
         body{font-family:Arial,sans-serif;padding:16px}
         h2{margin:0 0 12px}
         table{width:100%;border-collapse:collapse;font-size:11px}
-        th,td{border:1px solid #999;padding:5px;text-align:left}
+        th,td{border:1px solid #999;padding:6px;text-align:left}
         th{background:#efefef}
       </style></head><body>
         <h2>${project.name} - Project Tracker</h2>
         <table>
           <thead>
             <tr>
-              <th rowspan="2">Field Name</th>
-              <th colspan="6">Standcount</th>
-              <th colspan="6">Uniformity</th>
-            </tr>
-            <tr>
-              <th>Captured Date</th><th>Uploaded Date</th><th>Uploaded By</th><th>Assigned to</th><th>Staged</th><th>Delivery Date</th>
-              <th>Captured Date</th><th>Uploaded Date</th><th>Uploaded By</th><th>Assigned to</th><th>Staged</th><th>Delivery Date</th>
+              ${headers.map(h => `<th>${h}</th>`).join('')}
             </tr>
           </thead>
           <tbody>
-            ${rows.map(r => `<tr>
+            ${sortedRows.map(r => `<tr>
               <td>${r.field_name}</td>
-              <td>${r.stand.captured_date}</td><td>${r.stand.uploaded_date}</td><td>${r.stand.uploaded_by}</td><td>${r.stand.assigned_to}</td><td>${r.stand.stage}</td><td>${r.stand.delivery_date}</td>
-              <td>${r.uniformity.captured_date}</td><td>${r.uniformity.uploaded_date}</td><td>${r.uniformity.uploaded_by}</td><td>${r.uniformity.assigned_to}</td><td>${r.uniformity.stage}</td><td>${r.uniformity.delivery_date}</td>
+              <td>${r.category}</td>
+              <td>${r.captured_date}</td>
+              <td>${r.uploaded_date}</td>
+              <td>${r.uploaded_by}</td>
+              <td>${r.assigned_to}</td>
+              <td>${r.stage}</td>
+              <td>${r.delivery_date}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -3329,70 +3427,134 @@ function ProjectTrackerTab({ project, jobs, canExport }) {
     w.document.close()
     w.focus()
     w.print()
+    toast.success('PDF print triggered')
   }
 
   return (
     <div className="space-y-4">
-      {canExport && (
-        <div className="flex items-center justify-end gap-2">
-          <button onClick={downloadCSV}
-            className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
-            <Download size={12} /> CSV
-          </button>
-          <button onClick={downloadExcel}
-            className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
-            <FileText size={12} /> Excel
-          </button>
-          <button onClick={downloadPDF}
-            className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
-            <FileCheck size={12} /> PDF
-          </button>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-zinc-950/20 p-3 rounded-xl border border-zinc-800/40">
+        {/* Filters */}
+        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+          <div className="relative">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search field name or assignee..."
+              className="w-full h-9 bg-zinc-900/60 border border-zinc-800 rounded-lg pl-3 pr-8 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-2.5 top-2.5 text-zinc-500 hover:text-zinc-300">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          <select
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value)}
+            className="h-9 bg-zinc-900/60 border border-zinc-800 rounded-lg px-2.5 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer"
+          >
+            <option value="all">All Categories</option>
+            <option value="Stand Count">Stand Count</option>
+            <option value="Uniformity">Uniformity</option>
+          </select>
+          <select
+            value={stageFilter}
+            onChange={e => setStageFilter(e.target.value)}
+            className="h-9 bg-zinc-900/60 border border-zinc-800 rounded-lg px-2.5 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer"
+          >
+            <option value="all">All Stages</option>
+            <option value="Pending">Pending</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Done">Done</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+          <select
+            value={assigneeFilter}
+            onChange={e => setAssigneeFilter(e.target.value)}
+            className="h-9 bg-zinc-900/60 border border-zinc-800 rounded-lg px-2.5 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer"
+          >
+            <option value="all">All Assignees</option>
+            <option value="Unassigned">Unassigned</option>
+            {assigneeOptions.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
         </div>
-      )}
+
+        {/* Exports */}
+        {canExport && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={downloadCSV}
+              className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
+              <Download size={12} /> CSV
+            </button>
+            <button onClick={downloadExcel}
+              className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
+              <FileText size={12} /> Excel
+            </button>
+            <button onClick={downloadPDF}
+              className="flex items-center gap-2 px-3 h-8 text-xs rounded-lg border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
+              <FileCheck size={12} /> PDF
+            </button>
+          </div>
+        )}
+      </div>
 
       <GlassCard className="overflow-hidden">
         {rows.length === 0 ? (
           <div className="p-10 text-center text-zinc-500 text-sm">No tracker rows yet.</div>
+        ) : sortedRows.length === 0 ? (
+          <div className="p-10 text-center text-zinc-500 text-sm">No matching tracker rows.</div>
         ) : (
           <div className="overflow-auto">
-            <table className="w-full min-w-[1500px] text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="bg-zinc-950/80 border-b border-zinc-800/60 text-[12px] text-zinc-300">
-                  <th className="text-left px-3 py-2" rowSpan={2}>Field Name</th>
-                  <th className="text-center px-3 py-2" colSpan={6}>Standcount</th>
-                  <th className="text-center px-3 py-2" colSpan={6}>Uniformity</th>
-                </tr>
-                <tr className="bg-zinc-950/70 border-b border-zinc-800/60 text-[10px] uppercase tracking-wider text-zinc-500">
-                  <th className="text-left px-3 py-2">Captured Date</th>
-                  <th className="text-left px-3 py-2">Uploaded Date</th>
-                  <th className="text-left px-3 py-2">Uploaded By</th>
-                  <th className="text-left px-3 py-2">Assigned to</th>
-                  <th className="text-left px-3 py-2">Staged</th>
-                  <th className="text-left px-3 py-2">Delivery Date</th>
-                  <th className="text-left px-3 py-2">Captured Date</th>
-                  <th className="text-left px-3 py-2">Uploaded Date</th>
-                  <th className="text-left px-3 py-2">Uploaded By</th>
-                  <th className="text-left px-3 py-2">Assigned to</th>
-                  <th className="text-left px-3 py-2">Staged</th>
-                  <th className="text-left px-3 py-2">Delivery Date</th>
+                <tr className="bg-zinc-950/80 border-b border-zinc-800/60 text-[11px] uppercase tracking-wider text-zinc-500">
+                  <th className="text-left px-4 py-3 cursor-pointer select-none hover:text-zinc-300" onClick={() => handleSort('field_name')}>
+                    Field Name <SortIcon col="field_name" />
+                  </th>
+                  <th className="text-left px-4 py-3 cursor-pointer select-none hover:text-zinc-300" onClick={() => handleSort('category')}>
+                    Category <SortIcon col="category" />
+                  </th>
+                  <th className="text-left px-4 py-3 cursor-pointer select-none hover:text-zinc-300" onClick={() => handleSort('captured_date')}>
+                    Captured Date <SortIcon col="captured_date" />
+                  </th>
+                  <th className="text-left px-4 py-3 cursor-pointer select-none hover:text-zinc-300" onClick={() => handleSort('uploaded_date')}>
+                    Uploaded Date <SortIcon col="uploaded_date" />
+                  </th>
+                  <th className="text-left px-4 py-3 cursor-pointer select-none hover:text-zinc-300" onClick={() => handleSort('uploaded_by')}>
+                    Uploaded By <SortIcon col="uploaded_by" />
+                  </th>
+                  <th className="text-left px-4 py-3 cursor-pointer select-none hover:text-zinc-300" onClick={() => handleSort('assigned_to')}>
+                    Assigned to <SortIcon col="assigned_to" />
+                  </th>
+                  <th className="text-left px-4 py-3 cursor-pointer select-none hover:text-zinc-300" onClick={() => handleSort('stage')}>
+                    Stage <SortIcon col="stage" />
+                  </th>
+                  <th className="text-left px-4 py-3 cursor-pointer select-none hover:text-zinc-300" onClick={() => handleSort('delivery_date')}>
+                    Delivery Date <SortIcon col="delivery_date" />
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
-                  <tr key={`${r.field_name}-${i}`} className="border-t border-zinc-800/40 bg-zinc-950/50">
-                    <td className="px-3 py-2.5 text-zinc-200 font-medium">{r.field_name}</td>
-                    <td className="px-3 py-2.5 text-zinc-400">{r.stand.captured_date}</td>
-                    <td className="px-3 py-2.5 text-zinc-400">{r.stand.uploaded_date}</td>
-                    <td className="px-3 py-2.5 text-zinc-300">{r.stand.uploaded_by}</td>
-                    <td className="px-3 py-2.5 text-zinc-300">{r.stand.assigned_to}</td>
-                    <td className="px-3 py-2.5 text-zinc-300">{r.stand.stage}</td>
-                    <td className="px-3 py-2.5 text-zinc-400">{r.stand.delivery_date}</td>
-                    <td className="px-3 py-2.5 text-zinc-400">{r.uniformity.captured_date}</td>
-                    <td className="px-3 py-2.5 text-zinc-400">{r.uniformity.uploaded_date}</td>
-                    <td className="px-3 py-2.5 text-zinc-300">{r.uniformity.uploaded_by}</td>
-                    <td className="px-3 py-2.5 text-zinc-300">{r.uniformity.assigned_to}</td>
-                    <td className="px-3 py-2.5 text-zinc-300">{r.uniformity.stage}</td>
-                    <td className="px-3 py-2.5 text-zinc-400">{r.uniformity.delivery_date}</td>
+                {sortedRows.map((r, i) => (
+                  <tr key={r.id || i} className="border-t border-zinc-800/40 bg-zinc-950/50 hover:bg-white/[0.01] transition-colors">
+                    <td className="px-4 py-3 text-zinc-200 font-medium">{r.field_name}</td>
+                    <td className="px-4 py-3 text-zinc-400">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                        r.category === 'Uniformity'
+                          ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                          : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
+                        {r.category}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-zinc-400">{r.captured_date}</td>
+                    <td className="px-4 py-3 text-zinc-400">{r.uploaded_date}</td>
+                    <td className="px-4 py-3 text-zinc-300">{r.uploaded_by}</td>
+                    <td className="px-4 py-3 text-zinc-300">{r.assigned_to}</td>
+                    <td className="px-4 py-3"><StageChip status={r.stage} /></td>
+                    <td className="px-4 py-3 text-zinc-400">{r.delivery_date}</td>
                   </tr>
                 ))}
               </tbody>
