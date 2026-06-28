@@ -29,6 +29,7 @@ const LIST_CACHE_MAX_ENTRIES = 500
 const listCache = new Map()
 let jobsAdvancedSchemaAvailable = null
 let projectsSlaSchemaAvailable = null
+let userProjectsFkDropped = false
 
 function parsePositiveInt(value, fallback, min = 1, max = 200) {
   const n = Number.parseInt(String(value ?? ''), 10)
@@ -1054,10 +1055,31 @@ async function handleRoute(request, context) {
         if (!isClientProj && user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can assign users' }, 403)
       }
 
+      // One-time runtime migration: drop FK constraint via RPC function
+      if (!userProjectsFkDropped) {
+        try {
+          await sb.rpc('drop_user_projects_fk')
+          console.log('[Migration] Successfully dropped user_projects FK constraint')
+        } catch (e) {
+          console.warn('[Migration] RPC drop_user_projects_fk not available:', e.message || 'unknown')
+        }
+        userProjectsFkDropped = true
+      }
+
       // Remove existing assignments then re-add
       await sb.from('user_projects').delete().eq('project_id', projectId)
       if (user_ids.length > 0) {
-        await sb.from('user_projects').insert(user_ids.map(uid => ({ id: uuidv4(), user_id: uid, project_id: projectId })))
+        const { error: insertErr } = await sb.from('user_projects').insert(
+          user_ids.map(uid => ({ id: uuidv4(), user_id: uid, project_id: projectId }))
+        )
+        if (insertErr) {
+          if (insertErr.message.includes('foreign key') || insertErr.message.includes('fkey') || insertErr.code === '23503') {
+            console.error('[assign-users] FK constraint still active. Run migration SQL.')
+            return json({ error: 'Database migration needed: run this SQL in Supabase SQL Editor → ALTER TABLE public.user_projects DROP CONSTRAINT IF EXISTS user_projects_project_id_fkey;' }, 500)
+          }
+          console.error('[assign-users] Insert failed:', insertErr.message)
+          return json({ error: `Assignment failed: ${insertErr.message}` }, 500)
+        }
       }
       return json({ success: true })
     }

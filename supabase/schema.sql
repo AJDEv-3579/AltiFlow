@@ -410,6 +410,12 @@ ALTER TABLE IF EXISTS public.users ADD COLUMN IF NOT EXISTS email TEXT;
 -- Remove foreign key constraint so project_id can reference either projects or client_projects
 ALTER TABLE IF EXISTS public.user_projects DROP CONSTRAINT IF EXISTS user_projects_project_id_fkey;
 
-
-
+-- Runtime-callable migration function: drops the FK constraint
+-- Can be invoked via: supabase.rpc('drop_user_projects_fk')
+CREATE OR REPLACE FUNCTION public.drop_user_projects_fk()
+RETURNS void AS $$
+BEGIN
+  ALTER TABLE IF EXISTS public.user_projects DROP CONSTRAINT IF EXISTS user_projects_project_id_fkey;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
