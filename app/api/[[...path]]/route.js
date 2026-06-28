@@ -185,6 +185,25 @@ async function hasPasskeyColumns() {
   return !error
 }
 
+async function hasEmailColumn() {
+  const { error } = await sb.from('users').select('id, email').limit(1)
+  return !error
+}
+
+async function generateUniqueUsername(email) {
+  const base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '');
+  const { data } = await sb.from('users').select('username')
+  const taken = new Set((data || []).map(u => u.username.toLowerCase()))
+  
+  let candidate = base || 'user'
+  let counter = 1
+  while (taken.has(candidate.toLowerCase())) {
+    candidate = `${base}${counter}`
+    counter++
+  }
+  return candidate
+}
+
 async function getFallbackPasskeyRow(userId) {
   await ensurePasswordResetCodesTable()
   const nowIso = new Date().toISOString()
@@ -516,7 +535,17 @@ async function handleRoute(request, context) {
     if (route === '/auth/login' && method === 'POST') {
       const { username, password } = await request.json()
       if (!username || !password) return json({ error: 'username & password required' }, 400)
-      const { data: user } = await sb.from('users').select('*').ilike('username', username).maybeSingle()
+      
+      let user = null
+      const cleanUsername = username.trim()
+      if (await hasEmailColumn()) {
+        const { data } = await sb.from('users').select('*').or(`username.ilike.${cleanUsername},email.ilike.${cleanUsername}`).maybeSingle()
+        user = data
+      } else {
+        const { data } = await sb.from('users').select('*').ilike('username', cleanUsername).maybeSingle()
+        user = data
+      }
+
       if (!user) return json({ error: 'Invalid credentials' }, 401)
       const ok = await bcrypt.compare(password, user.password_hash)
       if (!ok) return json({ error: 'Invalid credentials' }, 401)
@@ -538,6 +567,30 @@ async function handleRoute(request, context) {
         clientData = data
       }
       return json({ user: { ...strip(user), client: clientData } })
+    }
+
+    if (route === '/auth/change-username' && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user) return json({ error: 'Unauthorized' }, 401)
+      const { new_username } = await request.json()
+      if (!new_username || !new_username.trim()) return json({ error: 'Username is required' }, 400)
+      
+      const trimmed = new_username.trim()
+      if (trimmed.length < 3) return json({ error: 'Username must be at least 3 characters' }, 400)
+      if (trimmed.includes('@')) return json({ error: 'Username cannot be an email address' }, 400)
+      if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) return json({ error: 'Username can only contain letters, numbers, and underscores' }, 400)
+      
+      const { data: exists } = await sb.from('users').select('id').ilike('username', trimmed).maybeSingle()
+      if (exists) {
+        if (exists.id !== user.id) {
+          return json({ error: 'Username is already taken' }, 409)
+        }
+        return json({ success: true, user: strip(user) })
+      }
+      
+      const { data: updated, error: updateErr } = await sb.from('users').update({ username: trimmed }).eq('id', user.id).select().single()
+      if (updateErr) return json({ error: updateErr.message }, 500)
+      return json({ success: true, user: strip(updated) })
     }
 
     if (route === '/auth/change-password' && method === 'POST') {
@@ -668,15 +721,26 @@ async function handleRoute(request, context) {
       }
       // Admin role cannot create users — only Super-Admin
       if (user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can create users' }, 403)
-      const { data: exists } = await sb.from('users').select('id').ilike('username', username).maybeSingle()
+      let emailVal = null
+      let usernameVal = username.trim()
+
+      if (usernameVal.includes('@')) {
+        emailVal = usernameVal
+        usernameVal = await generateUniqueUsername(emailVal)
+      }
+
+      const { data: exists } = await sb.from('users').select('id').ilike('username', usernameVal).maybeSingle()
       if (exists) return json({ error: 'Username already exists' }, 409)
       const pwd = password || DEFAULT_TEAM_PWD
       const assignedClientId = user.role === CLIENT_ADMIN ? user.client_id : (CLIENT_ROLES.includes(role) ? (client_id || null) : null)
       const newUser = {
-        id: uuidv4(), username,
+        id: uuidv4(), username: usernameVal,
         password_hash: await bcrypt.hash(pwd, 10),
         role, client_id: assignedClientId,
         must_change_password: true,
+      }
+      if (await hasEmailColumn()) {
+        newUser.email = emailVal
       }
       const { data, error } = await sb.from('users').insert(newUser).select().single()
       if (error) return json({ error: error.message }, 500)

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS public.clients (
 CREATE TABLE IF NOT EXISTS public.users (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   username                TEXT UNIQUE NOT NULL,
+  email                   TEXT,
   password_hash           TEXT NOT NULL,
   passcode_key_hash       TEXT,
   passcode_key_ext        TEXT,
@@ -402,4 +403,9 @@ ALTER TABLE public.password_reset_codes ENABLE ROW LEVEL SECURITY;
 --   consumed_at TIMESTAMPTZ,
 --   created_at TIMESTAMPTZ DEFAULT now()
 -- );
+
+-- Ensure email column is added for existing users
+ALTER TABLE IF EXISTS public.users ADD COLUMN IF NOT EXISTS email TEXT;
+
+
 

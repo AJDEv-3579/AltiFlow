@@ -955,7 +955,7 @@ function UploadForm({ onDone, clients, clientId }) {
 }
 
 // ============== SHELL ==============
-function Topbar({ user, onLogout, title, subtitle }) {
+function Topbar({ user, onLogout, onEditProfile, title, subtitle }) {
   return (
     <div className="sticky top-0 z-30 glass-strong border-b border-zinc-800/60">
       <div className="px-4 md:px-8 h-16 flex items-center justify-between">
@@ -971,11 +971,11 @@ function Topbar({ user, onLogout, title, subtitle }) {
         </div>
         <div className="flex items-center gap-2">
           <PeriodChip />
-          <div className="hidden md:flex items-center gap-2 text-xs text-zinc-400 px-3 py-1.5 rounded-lg bg-black/30 border border-white/10">
+          <button onClick={onEditProfile} className="hidden md:flex items-center gap-2 text-xs text-zinc-400 px-3 py-1.5 rounded-lg bg-black/30 border border-white/10 hover:border-white/20 transition cursor-pointer" title="Edit Profile">
             <User size={12} />{user.username}
             <span className="text-zinc-700">·</span>
             <span className="text-zinc-500">{user.role}</span>
-          </div>
+          </button>
           <Btn onClick={onLogout} variant="ghost" size="sm" icon={LogOut}>Sign out</Btn>
         </div>
       </div>
@@ -984,7 +984,7 @@ function Topbar({ user, onLogout, title, subtitle }) {
 }
 
 // ============== ADMIN APP (Super-Admin full / Admin restricted) ==============
-function AdminApp({ user, onLogout }) {
+function AdminApp({ user, onLogout, onEditProfile }) {
   const isSuperAdmin = user.role === 'Super-Admin'
   const [tab, setTab] = useState('dashboard')
   const [projects, setProjects] = useState([])
@@ -1160,6 +1160,7 @@ function AdminApp({ user, onLogout }) {
           const next = clientProjects.find(p => p.id === projectId)
           if (next) setActiveClientProject(next)
         }}
+        onEditProfile={onEditProfile}
       />
     )
   }
@@ -1167,7 +1168,7 @@ function AdminApp({ user, onLogout }) {
   return (
     <div className="min-h-screen relative">
       <Backdrop />
-      <Topbar user={user} onLogout={onLogout} title="Command Center" subtitle={`${user.role} · Global View`} />
+      <Topbar user={user} onLogout={onLogout} onEditProfile={onEditProfile} title="Command Center" subtitle={`${user.role} · Global View`} />
       <div className="px-4 md:px-8 py-6 relative z-10">
         <div className="flex items-center gap-1 mb-6 overflow-x-auto no-scrollbar">
           {tabs.map(t => (
@@ -1965,7 +1966,7 @@ function AdminPipelineApp({ user, onLogout }) {
   return (
     <div className="min-h-screen relative">
       <Backdrop />
-      <Topbar user={user} onLogout={onLogout} title="Pipeline" subtitle="Admin · Operations View" />
+      <Topbar user={user} onLogout={onLogout} onEditProfile={onEditProfile} title="Pipeline" subtitle="Admin · Operations View" />
       <div className="px-4 md:px-8 py-6 relative z-10">
         <div className="flex items-center justify-between mb-4">
           <div className="text-sm text-zinc-400">Drag cards between stages. <span className="text-zinc-600">Refly cards are locked until resolved.</span></div>
@@ -2197,7 +2198,7 @@ function EditProjectInfoModal({ project, onDone, onCancel }) {
 }
 
 // ============== PROJECTS LIST PAGE ==============
-function ProjectsListPage({ user, projects, isAdmin, onNavigate, onRefresh, onLogout }) {
+function ProjectsListPage({ user, projects, isAdmin, onNavigate, onRefresh, onLogout, onEditProfile }) {
   const [showCreate, setShowCreate] = useState(false)
 
   async function deleteProject(e, id) {
@@ -2215,7 +2216,7 @@ function ProjectsListPage({ user, projects, isAdmin, onNavigate, onRefresh, onLo
   return (
     <div className="min-h-screen relative">
       <Backdrop />
-      <Topbar user={user} onLogout={onLogout}
+      <Topbar user={user} onLogout={onLogout} onEditProfile={onEditProfile}
         title={user.client?.name || 'Client Portal'}
         subtitle="Workspace Overview" />
       <div className="px-4 md:px-8 py-8 relative z-10">
@@ -3039,14 +3040,16 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                               <span className={stageCls(activeStage(job))}>{activeStage(job)}</span>
                             </div>
 
-                            {/* Middle section: Symmetric Title and circular letter icon */}
-                            <div className="flex flex-col items-center justify-center text-center py-1">
-                              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-100 font-bold text-lg mb-2 shadow-inner">
+                            {/* Middle section: Symmetric compact row title */}
+                            <div className="flex items-center gap-3 py-1 w-full">
+                              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-100 font-bold text-base shadow-inner shrink-0">
                                 {job.title ? job.title.slice(0, 1).toUpperCase() : '?'}
                               </div>
-                              <span className="font-bold text-base text-zinc-100 tracking-tight leading-snug truncate max-w-[200px]" title={job.title}>
-                                {job.title}
-                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-base text-zinc-100 tracking-tight leading-snug truncate" title={job.title}>
+                                  {job.title}
+                                </div>
+                              </div>
                             </div>
 
                             {/* Symmetric Stats Bar */}
@@ -3815,6 +3818,7 @@ function ProjectDetailPage({
   projects = [],
   onSwitchProject,
   showProjectSwitcher = false,
+  onEditProfile,
 }) {
   const [tab, setTab] = useState(showDashboard ? 'dashboard' : 'jobs')
   const [jobs, setJobs] = useState([])
@@ -3972,6 +3976,7 @@ function ProjectDetailPage({
             {canEditProjectInfo && <Btn onClick={() => setShowEditProject(true)} variant="outline" size="sm" icon={Settings}>Edit Info</Btn>}
             {canDeleteWorkspace && <Btn onClick={deleteWorkspace} variant="danger" size="sm" icon={Trash2}>Delete Workspace</Btn>}
             {canRequestDeleteWorkspace && <Btn onClick={requestWorkspaceDelete} variant="ghost" size="sm" icon={FileWarning}>Request Delete</Btn>}
+            {onLogout && <Btn onClick={onEditProfile} variant="ghost" size="sm" icon={User}>Profile</Btn>}
             {onLogout && <Btn onClick={onLogout} variant="ghost" size="sm" icon={LogOut}>Sign out</Btn>}
           </div>
         </div>
@@ -4017,7 +4022,7 @@ function ProjectDetailPage({
 }
 
 // ============== CLIENT-ADMIN APP ==============
-function ClientAdminApp({ user, onLogout }) {
+function ClientAdminApp({ user, onLogout, onEditProfile }) {
   const [screen, setScreen] = useState('projects')
   const [projects, setProjects] = useState([])
   const [currentProject, setCurrentProject] = useState(null)
@@ -4040,7 +4045,7 @@ function ClientAdminApp({ user, onLogout }) {
     return (
       <>
         <ProjectDetailPage project={currentProject} user={user} orgUsers={orgUsers}
-          onBack={backToProjects} onRefresh={loadData} />
+          onBack={backToProjects} onRefresh={loadData} onEditProfile={onEditProfile} />
         <PeriodSwitcher />
       </>
     )
@@ -4048,7 +4053,7 @@ function ClientAdminApp({ user, onLogout }) {
   return (
     <>
       <ProjectsListPage user={user} isAdmin projects={projects} orgUsers={orgUsers}
-        onNavigate={openProject} onRefresh={loadData} onLogout={onLogout} />
+        onNavigate={openProject} onRefresh={loadData} onLogout={onLogout} onEditProfile={onEditProfile} />
       <PeriodSwitcher />
     </>
   )
@@ -4075,7 +4080,7 @@ function ClientAdminUserCreate({ onSubmit }) {
 }
 
 // ============== CLIENT APP (Client-User) ==============
-function ClientApp({ user, onLogout }) {
+function ClientApp({ user, onLogout, onEditProfile }) {
   const [projects, setProjects] = useState([])
   const [currentProject, setCurrentProject] = useState(null)
   const [screen, setScreen] = useState('waiting')
@@ -4138,7 +4143,8 @@ function ClientApp({ user, onLogout }) {
           onSwitchProject={projectId => {
             const next = projects.find(p => p.id === projectId)
             if (next) setCurrentProject(next)
-          }} />
+          }}
+          onEditProfile={onEditProfile} />
         <PeriodSwitcher />
       </>
     )
@@ -4146,10 +4152,60 @@ function ClientApp({ user, onLogout }) {
   return <><PeriodSwitcher /></>
 }
 
+// ============== EDIT PROFILE MODAL ==============
+function EditProfileModal({ user, onRefresh, onClose }) {
+  const [username, setUsername] = useState(user?.username || '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function save() {
+    if (!username.trim()) return
+    setBusy(true)
+    setError('')
+    try {
+      const r = await api('/auth/change-username', {
+        method: 'POST',
+        body: JSON.stringify({ new_username: username.trim() }),
+      })
+      toast.success('Username updated successfully')
+      onRefresh()
+      onClose()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <GlassCard className="w-full max-w-sm p-6 relative">
+        <button onClick={onClose} className="absolute right-4 top-4 p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-500"><X size={14} /></button>
+        <div className="text-sm font-semibold text-zinc-200 mb-4 flex items-center gap-2">
+          <User size={16} className="text-blue-400" /> Edit Profile
+        </div>
+        <div className="space-y-4">
+          <Field label="Username (User ID)" hint="Must be at least 3 characters. Alphanumeric and underscores only.">
+            <TextInput value={username} onChange={setUsername} placeholder="e.g. shalini" />
+          </Field>
+          {error && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 p-2 rounded-lg">{error}</div>}
+          <div className="flex gap-2">
+            <Btn variant="ghost" onClick={onClose} className="flex-1">Cancel</Btn>
+            <Btn onClick={save} disabled={busy || !username.trim() || username.trim() === user.username} className="flex-1">
+              {busy ? 'Saving...' : 'Save'}
+            </Btn>
+          </div>
+        </div>
+      </GlassCard>
+    </div>
+  )
+}
+
 // ============== ROOT ==============
 function App() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [showProfile, setShowProfile] = useState(false)
 
   async function loadMe() {
     setLoading(true)
@@ -4176,11 +4232,23 @@ function App() {
   }
   if (!user) return <><Login onLogin={setUser} /><PeriodSwitcher /></>
   if (user.must_change_password) return <><ChangePassword user={user} onDone={loadMe} /><PeriodSwitcher /></>
-  if (user.role === 'Super-Admin') return <><AdminApp user={user} onLogout={logout} /><PeriodSwitcher /></>
-  if (user.role === 'Admin') return <><AdminApp user={user} onLogout={logout} /><PeriodSwitcher /></>
-  if (user.role === 'Client-Admin') return <><ClientAdminApp user={user} onLogout={logout} /><PeriodSwitcher /></>
-  if (user.role === 'Client-User') return <><ClientApp user={user} onLogout={logout} /><PeriodSwitcher /></>
-  return <div>Unknown role</div>
+
+  let appContent = <div>Unknown role</div>
+  if (user.role === 'Super-Admin' || user.role === 'Admin') {
+    appContent = <AdminApp user={user} onLogout={logout} onEditProfile={() => setShowProfile(true)} />
+  } else if (user.role === 'Client-Admin') {
+    appContent = <ClientAdminApp user={user} onLogout={logout} onEditProfile={() => setShowProfile(true)} />
+  } else if (user.role === 'Client-User') {
+    appContent = <ClientApp user={user} onLogout={logout} onEditProfile={() => setShowProfile(true)} />
+  }
+
+  return (
+    <>
+      {appContent}
+      {showProfile && <EditProfileModal user={user} onRefresh={loadMe} onClose={() => setShowProfile(false)} />}
+      <PeriodSwitcher />
+    </>
+  )
 }
 
 export default App
