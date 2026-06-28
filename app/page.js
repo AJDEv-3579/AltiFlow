@@ -986,12 +986,7 @@ function Topbar({ user, onLogout, onEditProfile, title, subtitle }) {
 // ============== ADMIN APP (Super-Admin full / Admin restricted) ==============
 function AdminApp({ user, onLogout, onEditProfile }) {
   const isSuperAdmin = user.role === 'Super-Admin'
-  const [tab, setTab] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('altiflow_admin_tab') || 'dashboard'
-    }
-    return 'dashboard'
-  })
+  const [tab, setTab] = useState('dashboard')
   const [projects, setProjects] = useState([])
   const [clientProjects, setClientProjects] = useState([])
   const [assignedJobs, setAssignedJobs] = useState([])
@@ -1001,20 +996,19 @@ function AdminApp({ user, onLogout, onEditProfile }) {
   const [analytics, setAnalytics] = useState(null)
   const [deletionRequests, setDeletionRequests] = useState([])
   const [recycleItems, setRecycleItems] = useState([])
-  const [active, setActive] = useState(() => {
+  const [active, setActive] = useState(null)
+  const [activeClientProject, setActiveClientProject] = useState(null)
+
+  useEffect(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('altiflow_admin_active_proj')
-      return saved ? JSON.parse(saved) : null
+      const savedTab = localStorage.getItem('altiflow_admin_tab')
+      if (savedTab) setTab(savedTab)
+      const savedActive = localStorage.getItem('altiflow_admin_active_proj')
+      if (savedActive) setActive(JSON.parse(savedActive))
+      const savedClientActive = localStorage.getItem('altiflow_admin_active_client_proj')
+      if (savedClientActive) setActiveClientProject(JSON.parse(savedClientActive))
     }
-    return null
-  })
-  const [activeClientProject, setActiveClientProject] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('altiflow_admin_active_client_proj')
-      return saved ? JSON.parse(saved) : null
-    }
-    return null
-  })
+  }, [])
 
   useEffect(() => {
     localStorage.setItem('altiflow_admin_tab', tab)
@@ -3852,20 +3846,22 @@ function ProjectDetailPage({
   showProjectSwitcher = false,
   onEditProfile,
 }) {
-  const [tab, setTab] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem(`altiflow_tab_${project.id}`) || (showDashboard ? 'dashboard' : 'jobs')
-    }
-    return showDashboard ? 'dashboard' : 'jobs'
-  })
-  useEffect(() => {
-    localStorage.setItem(`altiflow_tab_${projectInfo.id}`, tab)
-  }, [tab, projectInfo.id])
-
+  const [projectInfo, setProjectInfo] = useState(project)
+  const [tab, setTab] = useState(showDashboard ? 'dashboard' : 'jobs')
   const [jobs, setJobs] = useState([])
   const [assignedUserIds, setAssignedUserIds] = useState([])
   const [showEditProject, setShowEditProject] = useState(false)
-  const [projectInfo, setProjectInfo] = useState(project)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`altiflow_tab_${project.id}`)
+      if (saved) setTab(saved)
+    }
+  }, [project.id])
+
+  useEffect(() => {
+    localStorage.setItem(`altiflow_tab_${projectInfo.id}`, tab)
+  }, [tab, projectInfo.id])
   const [switchingProject, setSwitchingProject] = useState(false)
   const jobsCacheRef = useRef(new Map())
   const isAdmin = ['Client-Admin', 'Admin', 'Super-Admin'].includes(user.role)
@@ -4069,21 +4065,19 @@ function ProjectDetailPage({
 
 // ============== CLIENT-ADMIN APP ==============
 function ClientAdminApp({ user, onLogout, onEditProfile }) {
-  const [screen, setScreen] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('altiflow_ca_screen') || 'projects'
-    }
-    return 'projects'
-  })
+  const [screen, setScreen] = useState('projects')
   const [projects, setProjects] = useState([])
-  const [currentProject, setCurrentProject] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('altiflow_ca_project')
-      return saved ? JSON.parse(saved) : null
-    }
-    return null
-  })
+  const [currentProject, setCurrentProject] = useState(null)
   const [orgUsers, setOrgUsers] = useState([])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedScreen = localStorage.getItem('altiflow_ca_screen')
+      if (savedScreen) setScreen(savedScreen)
+      const savedProj = localStorage.getItem('altiflow_ca_project')
+      if (savedProj) setCurrentProject(JSON.parse(savedProj))
+    }
+  }, [])
 
   useEffect(() => {
     localStorage.setItem('altiflow_ca_screen', screen)
@@ -4151,20 +4145,18 @@ function ClientAdminUserCreate({ onSubmit }) {
 // ============== CLIENT APP (Client-User) ==============
 function ClientApp({ user, onLogout, onEditProfile }) {
   const [projects, setProjects] = useState([])
-  const [currentProject, setCurrentProject] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('altiflow_cu_project')
-      return saved ? JSON.parse(saved) : null
-    }
-    return null
-  })
-  const [screen, setScreen] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('altiflow_cu_screen') || 'waiting'
-    }
-    return 'waiting'
-  })
+  const [currentProject, setCurrentProject] = useState(null)
+  const [screen, setScreen] = useState('waiting')
   const [loadingProject, setLoadingProject] = useState(false)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedScreen = localStorage.getItem('altiflow_cu_screen')
+      if (savedScreen) setScreen(savedScreen)
+      const savedProj = localStorage.getItem('altiflow_cu_project')
+      if (savedProj) setCurrentProject(JSON.parse(savedProj))
+    }
+  }, [])
 
   useEffect(() => {
     localStorage.setItem('altiflow_cu_screen', screen)
