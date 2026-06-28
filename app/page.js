@@ -13,7 +13,7 @@ import {
   Plane, Plus, Radar, RefreshCw, Rocket, Search, Settings, Shield, ShieldAlert,
   Sparkles, Trash2, Upload, User, Users, X, Camera, FileCheck, Zap, ChevronLeft,
   CheckCircle2, Lock, Hash, Calendar, Box, Server, BarChart3, Bell, Sunrise, Sunset, Moon as MoonIcon, Sun as SunIcon,
-  FolderOpen, Download, Folder, FileText,
+  FolderOpen, Download, Folder, FileText, Eye, EyeOff,
 } from 'lucide-react'
 
 // ============== API HELPER ==============
@@ -135,6 +135,20 @@ function Field({ label, children, hint }) {
 }
 
 function TextInput({ value, onChange, placeholder, type = 'text', big = false, className = '', ...rest }) {
+  const [showPassword, setShowPassword] = useState(false)
+  if (type === 'password') {
+    return (
+      <div className="relative w-full">
+        <input type={showPassword ? 'text' : 'password'} value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+          className={`w-full bg-zinc-900/60 border border-zinc-800 rounded-lg pl-3 pr-10 ${big ? 'h-14 text-base fat-input' : 'h-11 text-sm'} text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 focus:ring-2 focus:ring-zinc-700/40 transition ${className}`}
+          {...rest} />
+        <button type="button" onClick={() => setShowPassword(!showPassword)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 focus:outline-none flex items-center justify-center">
+          {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </div>
+    )
+  }
   return (
     <input type={type} value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder}
       className={`w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 ${big ? 'h-14 text-base fat-input' : 'h-11 text-sm'} text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 focus:ring-2 focus:ring-zinc-700/40 transition ${className}`}
@@ -2792,7 +2806,7 @@ function ProjectTeamTab({ project, orgUsers, assignedUserIds, onCreateUser, onSa
                 <label key={member.id} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-zinc-900/60 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-colors">
                   <div className="min-w-0">
                     <div className="text-sm text-zinc-100 truncate">{member.username}</div>
-                    <div className="text-[10px] uppercase tracking-wider text-zinc-500">{member.client_name || 'Client User'}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-zinc-500">{member.client_name || member.role || 'Client User'}</div>
                   </div>
                   <input
                     type="checkbox"
@@ -3863,7 +3877,7 @@ function ProjectDetailPage({
   async function createTeamUser(username) {
     const r = await api('/users', {
       method: 'POST',
-      body: JSON.stringify({ username, role: 'Client-User' }),
+      body: JSON.stringify({ username, role: 'Client-User', client_id: projectInfo?.client_id }),
     })
     await onRefresh()
     return r.user

@@ -1,3 +1,4 @@
+
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
@@ -100,11 +101,11 @@ async function hasProjectsSlaSchema() {
 
 // ---------- Role helpers ----------
 const SUPER_ADMIN = 'Super-Admin'
-const ADMIN       = 'Admin'
+const ADMIN = 'Admin'
 const CLIENT_ADMIN = 'Client-Admin'
-const CLIENT_USER  = 'Client-User'
+const CLIENT_USER = 'Client-User'
 const INTERNAL_ROLES = [SUPER_ADMIN, ADMIN]
-const CLIENT_ROLES   = [CLIENT_ADMIN, CLIENT_USER]
+const CLIENT_ROLES = [CLIENT_ADMIN, CLIENT_USER]
 
 function generatePasscode(length = 6) {
   const min = 10 ** (length - 1)
@@ -644,12 +645,12 @@ async function handleRoute(request, context) {
         return json({ users: users.map(u => ({ ...strip(u), client_name: cmap[u.client_id] || null })) })
       }
       if (user.role === CLIENT_ADMIN) {
-        const users = await fetchUsers(sel =>
+        const orgUsers = await fetchUsers(sel =>
           sb.from('users').select(sel)
-            .eq('client_id', user.client_id).eq('role', CLIENT_USER)
+            .eq('client_id', user.client_id)
             .order('created_at', { ascending: false })
         )
-        return json({ users: users.map(u => strip(u)) })
+        return json({ users: orgUsers.map(u => strip(u)) })
       }
       return json({ error: 'Forbidden' }, 403)
     }
@@ -970,13 +971,9 @@ async function handleRoute(request, context) {
       if (!project) return json({ error: 'Project not found' }, 404)
 
       if (user.role === CLIENT_ADMIN) {
-        const { data: validUsers } = await sb.from('users')
-          .select('id')
-          .in('id', user_ids)
-          .eq('client_id', user.client_id)
-          .eq('role', CLIENT_USER)
+        const { data: orgUsers } = await sb.from('users').select('id').in('id', user_ids).eq('client_id', user.client_id).eq('role', CLIENT_USER)
         if (project.client_id !== user.client_id) return json({ error: 'Forbidden' }, 403)
-        if ((validUsers || []).length !== user_ids.length) return json({ error: 'One or more users are not in your organization' }, 400)
+        if (!orgUsers || orgUsers.length !== user_ids.length) return json({ error: 'One or more users are not in your organization or assignable' }, 400)
       } else {
         if (!INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
         if (user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can assign users' }, 403)
@@ -1106,7 +1103,15 @@ async function handleRoute(request, context) {
         .order('upload_timestamp', { ascending: false })
         .range(from, to)
       if (user.role === CLIENT_ADMIN) q = q.eq('client_id', user.client_id)
-      else if (user.role === ADMIN) q = q.eq('assigned_to', user.id)
+      else if (user.role === ADMIN) {
+        const { data: assignments } = await sb.from('user_projects').select('project_id').eq('user_id', user.id)
+        const ids = (assignments || []).map(a => a.project_id)
+        if (ids.length > 0) {
+          q = q.or(`assigned_to.eq.${user.id},id.in.(${ids.map(id => `"${id}"`).join(',')})`)
+        } else {
+          q = q.eq('assigned_to', user.id)
+        }
+      }
       else if (user.role === CLIENT_USER) {
         const { data: assignments } = await sb.from('user_projects').select('project_id').eq('user_id', user.id)
         const ids = (assignments || []).map(a => a.project_id)
@@ -1642,7 +1647,7 @@ async function handleRoute(request, context) {
         const body = await request.json()
         const { title, capture_date, drone_name, category, flight_count, flights, has_logs, comments, assigned_to } = body
         if (!title?.trim()) return json({ error: 'Title required' }, 400)
-        if (!capture_date)   return json({ error: 'Capture date required' }, 400)
+        if (!capture_date) return json({ error: 'Capture date required' }, 400)
         if (!drone_name?.trim()) return json({ error: 'Drone name required' }, 400)
         const VALID_CATS = ['Stand Count', 'Uniformity']
         if (category && !VALID_CATS.includes(category)) return json({ error: 'Invalid category' }, 400)
@@ -1698,7 +1703,7 @@ async function handleRoute(request, context) {
         await addJobComment(data.id, user, 'Job card created', 'Created')
         if (comments?.trim()) await addJobComment(data.id, user, comments.trim(), 'Created')
         // Fire push notification to assigned Admin (non-blocking)
-        notifyAssignedAdmin(assigneeId, insertPayload.title, projectId, user.username).catch(() => {})
+        notifyAssignedAdmin(assigneeId, insertPayload.title, projectId, user.username).catch(() => { })
         return json({ job: data }, 201)
       }
     }
@@ -1757,9 +1762,9 @@ async function handleRoute(request, context) {
           if (hasUniStatus) allowed.uni_status = toDbStage(body.uni_status)
           allowed.status = statusFromStage(body.uni_status)
         }
-        if (body.title)                     allowed.title       = body.title.trim()
+        if (body.title) allowed.title = body.title.trim()
         if (body.comments !== undefined && hasComments) allowed.comments = body.comments?.trim() || null
-        if (body.has_logs  !== undefined && hasLogs) allowed.has_logs = body.has_logs === true
+        if (body.has_logs !== undefined && hasLogs) allowed.has_logs = body.has_logs === true
         if (body.assigned_to !== undefined) {
           if (![ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Only Admin can reassign jobs' }, 403)
           if (body.assigned_to) {
