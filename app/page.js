@@ -3090,11 +3090,13 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                                     <span className="text-zinc-500">Uploaded:</span>
                                     <span className="text-zinc-300 font-medium">{new Date(job.created_at).toLocaleDateString()}</span>
                                   </div>
-                                  <div className="flex items-center gap-2 min-w-0 justify-end">
-                                    <User size={12} className="text-zinc-500 shrink-0" />
-                                    <span className="text-zinc-500">Assigned:</span>
-                                    <span className="text-zinc-300 font-medium truncate" title={job.assigned_to_name || 'Unassigned'}>{job.assigned_to_name || 'Unassigned'}</span>
-                                  </div>
+                                  {isAdmin && (
+                                    <div className="flex items-center gap-2 min-w-0 justify-end">
+                                      <User size={12} className="text-zinc-500 shrink-0" />
+                                      <span className="text-zinc-500">Assigned:</span>
+                                      <span className="text-zinc-300 font-medium truncate" title={job.assigned_to_name || 'Unassigned'}>{job.assigned_to_name || 'Unassigned'}</span>
+                                    </div>
+                                  )}
                                 </div>
                                 {/* Per-flight breakdown table */}
                                 {flights.length > 0 && (
