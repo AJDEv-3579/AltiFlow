@@ -2613,7 +2613,7 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
       </div>
       <form onSubmit={submit} className="space-y-3">
         {/* Row 1: Field Name + Capture Date + Category */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Field label="Field Name *">
             <TextInput className={fieldErrorCls(missing.title)} value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g., Block A North" />
           </Field>
@@ -2632,7 +2632,7 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
         </div>
 
         {/* Row 2: Drone Name + Flight Count */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field label="Drone Name *">
             <TextInput className={fieldErrorCls(missing.drone)} value={form.drone_name} onChange={v => setForm(f => ({ ...f, drone_name: v }))} placeholder="e.g., DJI Mavic 3" />
           </Field>
@@ -2655,64 +2655,59 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
           {form.flights.map((flight, i) => {
             const missingFlight = submitted && (flight.image_count === null)
             return (
-            <div key={i} className={`rounded-xl bg-zinc-900/40 border p-3 space-y-2 ${missingFlight ? 'border-red-500/50' : 'border-zinc-800/60'}`}>
-              <div className="text-xs font-semibold text-zinc-400">Flight {i + 1}</div>
-              {/* Image folder */}
-              <div className="flex items-center gap-2">
-                <label htmlFor={`img-${project.id}-${i}`}
-                  className="flex-1 flex items-center gap-2 h-9 px-3 rounded-lg border border-zinc-700 bg-zinc-900/60 text-xs text-zinc-400 cursor-pointer hover:border-zinc-500 hover:text-zinc-200 transition-colors">
-                  <Folder size={13} className="shrink-0" />
-                  <span className="truncate">Select Image Folder</span>
-                </label>
-                <input id={`img-${project.id}-${i}`} type="file" multiple className="sr-only"
-                  ref={el => { if (el) { el.webkitdirectory = true } }}
-                  onChange={e => handleFolderSelect(e, i)} />
-                <div className={`flex items-center gap-1.5 text-xs font-mono px-3 h-9 rounded-lg border shrink-0 min-w-[110px] justify-center ${
-                  flight.image_count !== null ? 'bg-blue-500/10 border-blue-500/30 text-blue-300' : 'bg-zinc-900/60 border-zinc-800 text-zinc-600'}`}>
-                  <Camera size={11} className="shrink-0" />
-                  {flight.image_count !== null ? `${flight.image_count.toLocaleString()} images` : '—'}
+              <div key={i} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-xl bg-zinc-900/40 border transition ${
+                missingFlight ? 'border-red-500/50 bg-red-500/5' : 'border-zinc-800/60'
+              }`}>
+                <div className="text-xs font-semibold text-zinc-400 min-w-[70px] flex items-center gap-1.5 shrink-0">
+                  <span className="w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-300 font-mono">
+                    {i + 1}
+                  </span>
+                  <span>Flight {i + 1}</span>
+                </div>
+
+                {/* Images Input + Folder Picker */}
+                <div className="flex-1 flex items-center gap-2">
+                  <div className="flex-1 relative flex items-center">
+                    <input
+                      type="number"
+                      min="0"
+                      value={flight.image_count ?? ''}
+                      onChange={e => setFlightMetric(i, 'image_count', e.target.value)}
+                      placeholder="Images (required)"
+                      className={`w-full bg-zinc-900/60 border border-zinc-800 rounded-lg pl-3 pr-9 h-9 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 focus:ring-2 focus:ring-zinc-700/40 transition ${
+                        missingFlight ? 'border-red-500/50 focus:border-red-400' : ''
+                      }`}
+                    />
+                    <label htmlFor={`img-${project.id}-${i}`} className="absolute right-2.5 p-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors" title="Select folder to auto-count images">
+                      <Folder size={14} />
+                    </label>
+                    <input id={`img-${project.id}-${i}`} type="file" multiple className="sr-only"
+                      ref={el => { if (el) { el.webkitdirectory = true } }}
+                      onChange={e => handleFolderSelect(e, i)} />
+                  </div>
+                </div>
+
+                {/* CSV Input + File Picker */}
+                <div className="flex-1 flex items-center gap-2">
+                  <div className="flex-1 relative flex items-center">
+                    <input
+                      type="number"
+                      min="0"
+                      value={flight.csv_rows ?? ''}
+                      onChange={e => setFlightMetric(i, 'csv_rows', e.target.value)}
+                      placeholder="CSV Rows (optional)"
+                      className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg pl-3 pr-9 h-9 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 focus:ring-2 focus:ring-zinc-700/40 transition"
+                    />
+                    <label htmlFor={`csv-${project.id}-${i}`} className="absolute right-2.5 p-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors" title="Select CSV to auto-count rows">
+                      <FileText size={14} />
+                    </label>
+                    <input id={`csv-${project.id}-${i}`} type="file" accept=".csv,.CSV" className="sr-only"
+                      onChange={e => handleCSVSelect(e, i)} />
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center justify-end">
-                <div className="w-[170px]">
-                  <TextInput
-                    type="number"
-                    value={flight.image_count ?? ''}
-                    onChange={v => setFlightMetric(i, 'image_count', v)}
-                    placeholder="Manual image count"
-                    className="h-8 text-xs"
-                  />
-                </div>
-              </div>
-              {/* CSV file */}
-              <div className="flex items-center gap-2">
-                <label htmlFor={`csv-${project.id}-${i}`}
-                  className="flex-1 flex items-center gap-2 h-9 px-3 rounded-lg border border-zinc-700 bg-zinc-900/60 text-xs text-zinc-400 cursor-pointer hover:border-zinc-500 hover:text-zinc-200 transition-colors">
-                  <FileText size={13} className="shrink-0" />
-                  <span className="truncate">Select CSV File</span>
-                </label>
-                <input id={`csv-${project.id}-${i}`} type="file" accept=".csv,.CSV" className="sr-only"
-                  onChange={e => handleCSVSelect(e, i)} />
-                <div className={`flex items-center gap-1.5 text-xs font-mono px-3 h-9 rounded-lg border shrink-0 min-w-[110px] justify-center ${
-                  flight.csv_rows !== null ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-zinc-900/60 border-zinc-800 text-zinc-600'}`}>
-                  <FileCheck size={11} className="shrink-0" />
-                  {flight.csv_rows !== null ? `${flight.csv_rows.toLocaleString()} rows` : '—'}
-                </div>
-              </div>
-              <div className="flex items-center justify-end">
-                <div className="w-[170px]">
-                  <TextInput
-                    type="number"
-                    value={flight.csv_rows ?? ''}
-                    onChange={v => setFlightMetric(i, 'csv_rows', v)}
-                    placeholder="Manual CSV rows (optional)"
-                    className="h-8 text-xs"
-                  />
-                </div>
-              </div>
-              {missingFlight && <div className="text-[11px] text-red-300">Image count is required for this flight. CSV rows are optional.</div>}
-            </div>
-          )})}
+            )
+          })}
         </div>
 
         {/* Logs checkbox */}
@@ -3012,7 +3007,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                 {group.jobs.length} card{group.jobs.length !== 1 ? 's' : ''}
               </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
               <AnimatePresence>
                 {group.jobs.map(job => {
                   const isOpen = expanded === job.id
@@ -3020,18 +3015,17 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                   const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
                   const totalCSV    = flights.reduce((s, f) => s + (f.csv_rows    || 0), 0)
                   return (
-                    <motion.div key={job.id} className="h-full" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
-                      <GlassCard className="overflow-hidden h-full flex flex-col justify-between">
+                    <motion.div key={job.id} className="w-full" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
+                      <GlassCard className="overflow-hidden w-full flex flex-col justify-between rounded-2xl border border-zinc-800/60 shadow-lg transition-all duration-200 hover:border-zinc-700/80">
                         {/* Card header — click to expand */}
                         <button type="button" onClick={() => setExpanded(isOpen ? null : job.id)}
-                          className="w-full text-left p-4 hover:bg-white/[0.02] transition-colors">
-                          <div className="flex items-start justify-between gap-3">
-                            {/* Left: field info */}
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-semibold text-zinc-100">{job.title}</span>
+                          className="w-full text-left p-5 hover:bg-white/[0.01] transition-colors">
+                          <div className="flex flex-col gap-4 w-full">
+                            {/* Top row: Category/Logs on left, Stage on right */}
+                            <div className="w-full flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 {job.category && (
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                                  <span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${
                                     job.category === 'Uniformity'
                                       ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
                                       : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
@@ -3042,48 +3036,59 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-medium">Logs</span>
                                 )}
                               </div>
-                              <div className="flex items-center gap-3 mt-1.5 flex-wrap text-[11px] text-zinc-500">
-                                {job.drone_name && (
-                                  <span className="flex items-center gap-1"><Plane size={10} />{job.drone_name}</span>
-                                )}
-                                {job.capture_date && (
-                                  <span className="flex items-center gap-1">
-                                    <Calendar size={10} />Captured {new Date(job.capture_date + 'T00:00:00').toLocaleDateString()}
+                              <span className={stageCls(activeStage(job))}>{activeStage(job)}</span>
+                            </div>
+
+                            {/* Middle section: Symmetric Title and circular letter icon */}
+                            <div className="flex flex-col items-center justify-center text-center py-2">
+                              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-100 font-bold text-lg mb-2 shadow-inner">
+                                {job.title ? job.title.slice(0, 1).toUpperCase() : '?'}
+                              </div>
+                              <span className="font-bold text-base text-zinc-100 tracking-tight leading-snug truncate max-w-[200px]" title={job.title}>
+                                {job.title}
+                              </span>
+                            </div>
+
+                            {/* Flight counts center pill */}
+                            {flights.length > 0 && (
+                              <div className="flex items-center justify-center gap-2.5 text-[11px] text-zinc-400 bg-zinc-900/40 border border-zinc-800/60 px-3 py-1 rounded-full w-fit mx-auto">
+                                <span>{flights.length} flight{flights.length !== 1 ? 's' : ''}</span>
+                                {totalImages > 0 && (
+                                  <span className="text-blue-400 flex items-center gap-0.5">
+                                    <Camera size={10} />{totalImages.toLocaleString()}
                                   </span>
                                 )}
-                                <span className="flex items-center gap-1">
-                                  <Clock size={10} />Uploaded {new Date(job.created_at).toLocaleDateString()}
-                                </span>
-                                {job.assigned_to_name && (
-                                  <span className="flex items-center gap-1"><User size={10} />{job.assigned_to_name}</span>
+                                {totalCSV > 0 && (
+                                  <span className="text-emerald-400 flex items-center gap-0.5">
+                                    <FileCheck size={10} />{totalCSV.toLocaleString()}
+                                  </span>
                                 )}
                               </div>
-                              {flights.length > 0 && (
-                                <div className="flex items-center gap-3 mt-1.5 text-[11px]">
-                                  <span className="text-zinc-600">{flights.length} flight{flights.length !== 1 ? 's' : ''}</span>
-                                  {totalImages > 0 && (
-                                    <span className="text-blue-400 flex items-center gap-1">
-                                      <Camera size={9} />{totalImages.toLocaleString()} images
-                                    </span>
-                                  )}
-                                  {totalCSV > 0 && (
-                                    <span className="text-emerald-400 flex items-center gap-1">
-                                      <FileCheck size={9} />{totalCSV.toLocaleString()} CSV rows
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                            {/* Right: single status for the job's category (read-only) */}
-                            <div className="flex items-center gap-2 shrink-0">
-                              {(() => {
-                                const stValue = activeStage(job)
-                                return (
-                                  <>
-                                    <span className={stageCls(stValue)}>{stValue}</span>
-                                  </>
-                                )
-                              })()}
+                            )}
+
+                            {/* Divider */}
+                            <div className="h-[1px] bg-zinc-800/40 w-full" />
+
+                            {/* Bottom metadata grid (symmetrically positioned 2-column) */}
+                            <div className="w-full grid grid-cols-2 gap-2 text-[10px] text-zinc-500 pt-1">
+                              <div className="flex items-center gap-1.5 truncate">
+                                <Plane size={11} className="text-zinc-600 shrink-0" />
+                                <span className="truncate" title={job.drone_name || 'No Drone'}>{job.drone_name || 'No Drone'}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 truncate justify-end">
+                                <Calendar size={11} className="text-zinc-600 shrink-0" />
+                                <span>{job.capture_date ? new Date(job.capture_date + 'T00:00:00').toLocaleDateString() : 'No Date'}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 truncate">
+                                <Clock size={11} className="text-zinc-600 shrink-0" />
+                                <span>Uploaded {new Date(job.created_at).toLocaleDateString()}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 truncate justify-end">
+                                <User size={11} className="text-zinc-600 shrink-0" />
+                                <span className="truncate" title={job.assigned_to_name || 'Unassigned'}>
+                                  {job.assigned_to_name || 'Unassigned'}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         </button>
@@ -3180,30 +3185,13 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                                           value={job.assigned_to || ''}
                                           onChange={e => updateStage(job.id, 'assigned_to', e.target.value || null)}
                                           disabled={updating === job.id + 'assigned_to'}
-                                          className="h-7 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2 text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-600"
+                                          className="h-7 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2 text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
                                         >
                                           <option value="">Unassigned</option>
                                           {adminAssignees.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
                                         </select>
                                       </div>
                                     )}
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-zinc-500">Stage</span>
-                                      <select
-                                        value={job.category === 'Uniformity' ? toUiJobStage(job.uni_status) : toUiJobStage(job.sc_status)}
-                                        onChange={e => {
-                                          const stageField = job.category === 'Uniformity' ? 'uni_status' : 'sc_status'
-                                          updateStage(job.id, stageField, toDbJobStage(e.target.value))
-                                        }}
-                                        disabled={updating === job.id + 'uni_status' || updating === job.id + 'sc_status'}
-                                        className="h-7 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2 text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
-                                      >
-                                        <option value="Pending">Pending</option>
-                                        <option value="In Progress">In Progress</option>
-                                        <option value="Done">Done</option>
-                                        <option value="Cancelled">Cancelled</option>
-                                      </select>
-                                    </div>
                                   </div>
                                   {canDelete && (
                                     <button onClick={() => deleteJob(job.id)}
