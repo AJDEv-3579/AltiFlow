@@ -986,7 +986,12 @@ function Topbar({ user, onLogout, onEditProfile, title, subtitle }) {
 // ============== ADMIN APP (Super-Admin full / Admin restricted) ==============
 function AdminApp({ user, onLogout, onEditProfile }) {
   const isSuperAdmin = user.role === 'Super-Admin'
-  const [tab, setTab] = useState('dashboard')
+  const [tab, setTab] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('altiflow_admin_tab') || 'dashboard'
+    }
+    return 'dashboard'
+  })
   const [projects, setProjects] = useState([])
   const [clientProjects, setClientProjects] = useState([])
   const [assignedJobs, setAssignedJobs] = useState([])
@@ -996,8 +1001,40 @@ function AdminApp({ user, onLogout, onEditProfile }) {
   const [analytics, setAnalytics] = useState(null)
   const [deletionRequests, setDeletionRequests] = useState([])
   const [recycleItems, setRecycleItems] = useState([])
-  const [active, setActive] = useState(null)
-  const [activeClientProject, setActiveClientProject] = useState(null)
+  const [active, setActive] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('altiflow_admin_active_proj')
+      return saved ? JSON.parse(saved) : null
+    }
+    return null
+  })
+  const [activeClientProject, setActiveClientProject] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('altiflow_admin_active_client_proj')
+      return saved ? JSON.parse(saved) : null
+    }
+    return null
+  })
+
+  useEffect(() => {
+    localStorage.setItem('altiflow_admin_tab', tab)
+  }, [tab])
+
+  useEffect(() => {
+    if (active) {
+      localStorage.setItem('altiflow_admin_active_proj', JSON.stringify(active))
+    } else {
+      localStorage.removeItem('altiflow_admin_active_proj')
+    }
+  }, [active])
+
+  useEffect(() => {
+    if (activeClientProject) {
+      localStorage.setItem('altiflow_admin_active_client_proj', JSON.stringify(activeClientProject))
+    } else {
+      localStorage.removeItem('altiflow_admin_active_client_proj')
+    }
+  }, [activeClientProject])
   const assignedJobsCacheRef = useRef(new Map())
 
   async function loadAuditLogs(force = false) {
@@ -3815,7 +3852,16 @@ function ProjectDetailPage({
   showProjectSwitcher = false,
   onEditProfile,
 }) {
-  const [tab, setTab] = useState(showDashboard ? 'dashboard' : 'jobs')
+  const [tab, setTab] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(`altiflow_tab_${project.id}`) || (showDashboard ? 'dashboard' : 'jobs')
+    }
+    return showDashboard ? 'dashboard' : 'jobs'
+  })
+  useEffect(() => {
+    localStorage.setItem(`altiflow_tab_${projectInfo.id}`, tab)
+  }, [tab, projectInfo.id])
+
   const [jobs, setJobs] = useState([])
   const [assignedUserIds, setAssignedUserIds] = useState([])
   const [showEditProject, setShowEditProject] = useState(false)
@@ -3855,12 +3901,17 @@ function ProjectDetailPage({
     } catch (e) { toast.error(e.message) }
   }
   async function saveAssignments(userIds) {
-    await api(`/projects/${projectInfo.id}/assign-users`, {
-      method: 'POST',
-      body: JSON.stringify({ user_ids: userIds }),
-    })
-    await loadAssignments(projectInfo.id)
-    await onRefresh()
+    try {
+      await api(`/projects/${projectInfo.id}/assign-users`, {
+        method: 'POST',
+        body: JSON.stringify({ user_ids: userIds }),
+      })
+      toast.success('Team assignments saved')
+      await loadAssignments(projectInfo.id)
+      await onRefresh()
+    } catch (e) {
+      toast.error(e.message || 'Failed to save assignments')
+    }
   }
   async function createTeamUser(username) {
     const r = await api('/users', {
@@ -4018,10 +4069,33 @@ function ProjectDetailPage({
 
 // ============== CLIENT-ADMIN APP ==============
 function ClientAdminApp({ user, onLogout, onEditProfile }) {
-  const [screen, setScreen] = useState('projects')
+  const [screen, setScreen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('altiflow_ca_screen') || 'projects'
+    }
+    return 'projects'
+  })
   const [projects, setProjects] = useState([])
-  const [currentProject, setCurrentProject] = useState(null)
+  const [currentProject, setCurrentProject] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('altiflow_ca_project')
+      return saved ? JSON.parse(saved) : null
+    }
+    return null
+  })
   const [orgUsers, setOrgUsers] = useState([])
+
+  useEffect(() => {
+    localStorage.setItem('altiflow_ca_screen', screen)
+  }, [screen])
+
+  useEffect(() => {
+    if (currentProject) {
+      localStorage.setItem('altiflow_ca_project', JSON.stringify(currentProject))
+    } else {
+      localStorage.removeItem('altiflow_ca_project')
+    }
+  }, [currentProject])
 
   async function loadData() {
     try {
@@ -4077,9 +4151,32 @@ function ClientAdminUserCreate({ onSubmit }) {
 // ============== CLIENT APP (Client-User) ==============
 function ClientApp({ user, onLogout, onEditProfile }) {
   const [projects, setProjects] = useState([])
-  const [currentProject, setCurrentProject] = useState(null)
-  const [screen, setScreen] = useState('waiting')
+  const [currentProject, setCurrentProject] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('altiflow_cu_project')
+      return saved ? JSON.parse(saved) : null
+    }
+    return null
+  })
+  const [screen, setScreen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('altiflow_cu_screen') || 'waiting'
+    }
+    return 'waiting'
+  })
   const [loadingProject, setLoadingProject] = useState(false)
+
+  useEffect(() => {
+    localStorage.setItem('altiflow_cu_screen', screen)
+  }, [screen])
+
+  useEffect(() => {
+    if (currentProject) {
+      localStorage.setItem('altiflow_cu_project', JSON.stringify(currentProject))
+    } else {
+      localStorage.removeItem('altiflow_cu_project')
+    }
+  }, [currentProject])
 
   async function loadData() {
     setLoadingProject(true)
@@ -4214,7 +4311,20 @@ function App() {
   }
   useEffect(() => { loadMe() }, [])
 
-  function logout() { clearToken(); setUser(null); toast.success('Signed out') }
+  function logout() {
+    clearToken()
+    setUser(null)
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('altiflow_ca_screen')
+      localStorage.removeItem('altiflow_ca_project')
+      localStorage.removeItem('altiflow_cu_screen')
+      localStorage.removeItem('altiflow_cu_project')
+      localStorage.removeItem('altiflow_admin_active_proj')
+      localStorage.removeItem('altiflow_admin_active_client_proj')
+      localStorage.removeItem('altiflow_admin_tab')
+    }
+    toast.success('Signed out')
+  }
 
   if (loading) {
     return (
