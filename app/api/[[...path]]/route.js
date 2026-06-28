@@ -1031,7 +1031,18 @@ async function handleRoute(request, context) {
       if (!Array.isArray(user_ids)) return json({ error: 'user_ids array required' }, 400)
       if (!user) return json({ error: 'Unauthorized' }, 401)
 
-      const { data: project } = await sb.from('projects').select('id, client_id').eq('id', projectId).maybeSingle()
+      let project = null
+      let isClientProj = false
+      const { data: p } = await sb.from('projects').select('id, client_id').eq('id', projectId).maybeSingle()
+      if (p) {
+        project = p
+      } else {
+        const { data: cp } = await sb.from('client_projects').select('id, client_id').eq('id', projectId).maybeSingle()
+        if (cp) {
+          project = cp
+          isClientProj = true
+        }
+      }
       if (!project) return json({ error: 'Project not found' }, 404)
 
       if (user.role === CLIENT_ADMIN) {
@@ -1040,7 +1051,7 @@ async function handleRoute(request, context) {
         if (!orgUsers || orgUsers.length !== user_ids.length) return json({ error: 'One or more users are not in your organization or assignable' }, 400)
       } else {
         if (!INTERNAL_ROLES.includes(user.role)) return json({ error: 'Forbidden' }, 403)
-        if (user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can assign users' }, 403)
+        if (!isClientProj && user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can assign users' }, 403)
       }
 
       // Remove existing assignments then re-add
@@ -1551,7 +1562,14 @@ async function handleRoute(request, context) {
         .select('id, client_id, name, type, start_date, end_date, head, created_by, created_at, updated_at')
         .order('created_at', { ascending: false })
         .range(from, to)
-      if (CLIENT_ROLES.includes(user.role)) q = q.eq('client_id', user.client_id)
+      if (user.role === CLIENT_USER) {
+        const { data: assignments } = await sb.from('user_projects').select('project_id').eq('user_id', user.id)
+        const ids = (assignments || []).map(a => a.project_id)
+        if (ids.length === 0) return json({ projects: [] })
+        q = q.in('id', ids)
+      } else if (user.role === CLIENT_ADMIN) {
+        q = q.eq('client_id', user.client_id)
+      }
 
       const { data, error } = await q
       if (error) return json({ error: error.message }, 500)

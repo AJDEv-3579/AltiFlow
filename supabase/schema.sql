@@ -143,7 +143,7 @@ ALTER TABLE public.system_state ENABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS public.user_projects (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-  project_id UUID NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+  project_id UUID NOT NULL,
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(user_id, project_id)
 );
@@ -406,6 +406,10 @@ ALTER TABLE public.password_reset_codes ENABLE ROW LEVEL SECURITY;
 
 -- Ensure email column is added for existing users
 ALTER TABLE IF EXISTS public.users ADD COLUMN IF NOT EXISTS email TEXT;
+
+-- Remove foreign key constraint so project_id can reference either projects or client_projects
+ALTER TABLE IF EXISTS public.user_projects DROP CONSTRAINT IF EXISTS user_projects_project_id_fkey;
+
 
 
 
