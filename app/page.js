@@ -3007,7 +3007,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                 {group.jobs.length} card{group.jobs.length !== 1 ? 's' : ''}
               </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 items-start">
               <AnimatePresence>
                 {group.jobs.map(job => {
                   const isOpen = expanded === job.id
@@ -3040,7 +3040,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                             </div>
 
                             {/* Middle section: Symmetric Title and circular letter icon */}
-                            <div className="flex flex-col items-center justify-center text-center py-2">
+                            <div className="flex flex-col items-center justify-center text-center py-1">
                               <div className="w-12 h-12 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-100 font-bold text-lg mb-2 shadow-inner">
                                 {job.title ? job.title.slice(0, 1).toUpperCase() : '?'}
                               </div>
@@ -3049,20 +3049,21 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                               </span>
                             </div>
 
-                            {/* Flight counts center pill */}
+                            {/* Symmetric Stats Bar */}
                             {flights.length > 0 && (
-                              <div className="flex items-center justify-center gap-2.5 text-[11px] text-zinc-400 bg-zinc-900/40 border border-zinc-800/60 px-3 py-1 rounded-full w-fit mx-auto">
-                                <span>{flights.length} flight{flights.length !== 1 ? 's' : ''}</span>
-                                {totalImages > 0 && (
-                                  <span className="text-blue-400 flex items-center gap-0.5">
-                                    <Camera size={10} />{totalImages.toLocaleString()}
-                                  </span>
-                                )}
-                                {totalCSV > 0 && (
-                                  <span className="text-emerald-400 flex items-center gap-0.5">
-                                    <FileCheck size={10} />{totalCSV.toLocaleString()}
-                                  </span>
-                                )}
+                              <div className="grid grid-cols-3 gap-1 py-2 bg-zinc-950/40 rounded-xl border border-zinc-800/40 w-full text-center">
+                                <div className="flex flex-col items-center justify-center">
+                                  <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Flights</span>
+                                  <span className="text-xs font-bold text-zinc-100 mt-0.5">{flights.length}</span>
+                                </div>
+                                <div className="flex flex-col items-center justify-center border-x border-zinc-800/40">
+                                  <span className="text-[9px] text-zinc-500 uppercase tracking-wider flex items-center gap-0.5 justify-center"><Camera size={9} /> Images</span>
+                                  <span className="text-xs font-bold text-blue-400 mt-0.5">{totalImages.toLocaleString()}</span>
+                                </div>
+                                <div className="flex flex-col items-center justify-center">
+                                  <span className="text-[9px] text-zinc-500 uppercase tracking-wider flex items-center gap-0.5 justify-center"><FileCheck size={9} /> CSV Rows</span>
+                                  <span className="text-xs font-bold text-emerald-400 mt-0.5">{totalCSV.toLocaleString()}</span>
+                                </div>
                               </div>
                             )}
 
