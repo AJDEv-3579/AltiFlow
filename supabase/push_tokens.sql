@@ -13,10 +13,7 @@ CREATE TABLE IF NOT EXISTS push_tokens (
 -- Index for fast user lookup when sending notifications
 CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id ON push_tokens(user_id);
 
--- Allow upsert on conflict
-CREATE UNIQUE INDEX IF NOT EXISTS idx_push_tokens_token ON push_tokens(token);
-
--- RLS: disable (using service role key from backend only)
-ALTER TABLE push_tokens DISABLE ROW LEVEL SECURITY;
+-- RLS: enable (using service role key from backend only)
+ALTER TABLE push_tokens ENABLE ROW LEVEL SECURITY;
 
 COMMENT ON TABLE push_tokens IS 'Stores Expo push notification tokens for the AltiFlow mobile app.';

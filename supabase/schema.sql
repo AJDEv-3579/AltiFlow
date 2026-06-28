@@ -122,7 +122,7 @@ BEGIN
    RETURNING value - 1 INTO current_val;
   RETURN current_val;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = '';
 
 -- =====================================================================
 -- 7) Row Level Security (optional — server uses service_role and
@@ -417,5 +417,8 @@ RETURNS void AS $$
 BEGIN
   ALTER TABLE IF EXISTS public.user_projects DROP CONSTRAINT IF EXISTS user_projects_project_id_fkey;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
+
+-- Revoke from public since it's a security definer function
+REVOKE EXECUTE ON FUNCTION public.drop_user_projects_fk() FROM PUBLIC;
 
