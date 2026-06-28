@@ -3040,15 +3040,10 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                               <span className={stageCls(activeStage(job))}>{activeStage(job)}</span>
                             </div>
 
-                            {/* Middle section: Symmetric compact row title */}
-                            <div className="flex items-center gap-3 py-1 w-full">
-                              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-100 font-bold text-base shadow-inner shrink-0">
-                                {job.title ? job.title.slice(0, 1).toUpperCase() : '?'}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <div className="font-bold text-base text-zinc-100 tracking-tight leading-snug truncate" title={job.title}>
-                                  {job.title}
-                                </div>
+                            {/* Middle section: Job title Only */}
+                            <div className="py-1 w-full text-left">
+                              <div className="font-bold text-base text-zinc-100 tracking-tight leading-snug truncate" title={job.title}>
+                                {job.title}
                               </div>
                             </div>
 
@@ -3069,31 +3064,6 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                                 </div>
                               </div>
                             )}
-
-                            {/* Divider */}
-                            <div className="h-[1px] bg-zinc-800/40 w-full" />
-
-                            {/* Bottom metadata grid (symmetrically positioned 2-column) */}
-                            <div className="w-full grid grid-cols-2 gap-2 text-[10px] text-zinc-500 pt-1">
-                              <div className="flex items-center gap-1.5 truncate">
-                                <Plane size={11} className="text-zinc-600 shrink-0" />
-                                <span className="truncate" title={job.drone_name || 'No Drone'}>{job.drone_name || 'No Drone'}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 truncate justify-end">
-                                <Calendar size={11} className="text-zinc-600 shrink-0" />
-                                <span>{job.capture_date ? new Date(job.capture_date + 'T00:00:00').toLocaleDateString() : 'No Date'}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 truncate">
-                                <Clock size={11} className="text-zinc-600 shrink-0" />
-                                <span>Uploaded {new Date(job.created_at).toLocaleDateString()}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 truncate justify-end">
-                                <User size={11} className="text-zinc-600 shrink-0" />
-                                <span className="truncate" title={job.assigned_to_name || 'Unassigned'}>
-                                  {job.assigned_to_name || 'Unassigned'}
-                                </span>
-                              </div>
-                            </div>
                           </div>
                         </button>
 
@@ -3103,6 +3073,29 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
                               exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
                               <div className="border-t border-zinc-800/60 px-4 py-4 space-y-4">
+                                {/* Metadata details shown only after clicking */}
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-zinc-400 bg-zinc-900/30 rounded-xl p-3 border border-zinc-800/40">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <Plane size={12} className="text-zinc-500 shrink-0" />
+                                    <span className="text-zinc-500">Drone:</span>
+                                    <span className="text-zinc-300 font-medium truncate" title={job.drone_name || 'No Drone'}>{job.drone_name || 'No Drone'}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 min-w-0 justify-end">
+                                    <Calendar size={12} className="text-zinc-500 shrink-0" />
+                                    <span className="text-zinc-500">Captured:</span>
+                                    <span className="text-zinc-300 font-medium">{job.capture_date ? new Date(job.capture_date + 'T00:00:00').toLocaleDateString() : 'No Date'}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <Clock size={12} className="text-zinc-500 shrink-0" />
+                                    <span className="text-zinc-500">Uploaded:</span>
+                                    <span className="text-zinc-300 font-medium">{new Date(job.created_at).toLocaleDateString()}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 min-w-0 justify-end">
+                                    <User size={12} className="text-zinc-500 shrink-0" />
+                                    <span className="text-zinc-500">Assigned:</span>
+                                    <span className="text-zinc-300 font-medium truncate" title={job.assigned_to_name || 'Unassigned'}>{job.assigned_to_name || 'Unassigned'}</span>
+                                  </div>
+                                </div>
                                 {/* Per-flight breakdown table */}
                                 {flights.length > 0 && (
                                   <div>
