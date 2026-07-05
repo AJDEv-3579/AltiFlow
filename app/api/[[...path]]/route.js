@@ -1499,7 +1499,7 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user || ![ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Forbidden' }, 403)
 
-      const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 40, maxLimit: 120 })
+      const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 500, maxLimit: 1000 })
       const commentLimit = parsePositiveInt(url.searchParams.get('comment_limit'), 10, 1, 50)
       const bypassCache = url.searchParams.get('refresh') === '1'
       const cacheKey = `jobs-assigned:${user.role}:${user.id}:${page}:${limit}:${commentLimit}`
@@ -1701,7 +1701,7 @@ async function handleRoute(request, context) {
       if (!proj) return json({ error: 'Project not found' }, 404)
 
       if (method === 'GET') {
-        const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 50, maxLimit: 150 })
+        const { url, page, limit, from, to } = getPagination(request, { defaultLimit: 500, maxLimit: 1000 })
         const commentLimit = parsePositiveInt(url.searchParams.get('comment_limit'), 10, 1, 50)
         const bypassCache = url.searchParams.get('refresh') === '1'
         const cacheKey = `jobs-by-project:${projectId}:${user.role}:${user.id}:${page}:${limit}:${commentLimit}`

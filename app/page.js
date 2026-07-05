@@ -1054,7 +1054,7 @@ function AdminApp({ user, onLogout, onEditProfile }) {
         setAssignedJobs(cached.value)
         return
       }
-      const aj = await api('/jobs-assigned?limit=40')
+      const aj = await api('/jobs-assigned?limit=500')
       setAssignedJobs(aj.jobs || [])
       assignedJobsCacheRef.current.set(cacheKey, { value: aj.jobs || [], expiresAt: Date.now() + 10000 })
     } catch (e) { toast.error(e.message) }
