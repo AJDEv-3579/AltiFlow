@@ -1484,21 +1484,23 @@ async function handleRoute(request, context) {
       const uniJobs = (jobs || []).filter(j => j.category === 'Uniformity')
       
       // Stand Count stats
+      const scDone = scJobs.filter(j => j.sc_status === 'Done').length
       const scStats = {
         total: scJobs.length,
-        done: scJobs.filter(j => j.sc_status === 'Done').length,
+        done: scDone,
         in_progress: scJobs.filter(j => j.sc_status === 'In Progress').length,
         blocked: scJobs.filter(j => j.sc_status === 'Blocked').length,
-        need_delivery: scJobs.filter(j => !j.sc_status || j.sc_status === 'Pending').length,
+        need_delivery: scJobs.length - scDone,
       }
       
       // Uniformity stats
+      const uniDone = uniJobs.filter(j => j.uni_status === 'Done').length
       const uniStats = {
         total: uniJobs.length,
-        done: uniJobs.filter(j => j.uni_status === 'Done').length,
+        done: uniDone,
         in_progress: uniJobs.filter(j => j.uni_status === 'In Progress').length,
         blocked: uniJobs.filter(j => j.uni_status === 'Blocked').length,
-        need_delivery: uniJobs.filter(j => !j.uni_status || j.uni_status === 'Pending').length,
+        need_delivery: uniJobs.length - uniDone,
       }
       
       // Month-wise created and delivered jobs
