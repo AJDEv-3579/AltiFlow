@@ -1480,7 +1480,7 @@ async function handleRoute(request, context) {
 
       // ===== NEW ANALYTICS: Job Card Metrics =====
       const scJobs = (jobs || []).filter(j => j.category === 'Stand Count' || !j.category || !j.uni_status)
-      const uniJobs = (jobs || []).filter(j => j.category === 'Uniformity' && j.uni_status)
+      const uniJobs = (jobs || []).filter(j => j.category === 'Uniformity')
       
       // Stand Count stats
       const scStats = {
