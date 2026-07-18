@@ -1,0 +1,5 @@
+field_name,capture_date,drone_name,category,flight_count,has_logs,comments,flight_1_image_count,flight_1_csv_rows,flight_2_image_count,flight_2_csv_rows,flight_3_image_count,flight_3_csv_rows
+Block A North,2025-07-15,DJI Mavic 3,Stand Count,2,false,Clear weather morning flight,1200,350,980,310,,
+Field B East,2025-07-16,DJI Phantom 4,Uniformity,1,true,Overcast but stable wind conditions,850,,,,,
+Plot C South,2025-07-17,DJI Agras T40,Stand Count,3,false,Good visibility all flights,1500,420,1350,390,1100,310
+Zone D West,2025-07-18,Parrot Anafi,Uniformity,1,false,Early morning capture low humidity,920,,,,,
