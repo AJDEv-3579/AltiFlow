@@ -1390,8 +1390,8 @@ async function handleRoute(request, context) {
       const supportsProjectsSla = await hasProjectsSlaSchema()
       const supportsAdvancedJobSchema = await hasJobsAdvancedSchema()
       const jobsAnalyticsSelect = supportsAdvancedJobSchema
-        ? 'id, project_id, created_at, status, sc_status, uni_status'
-        : 'id, project_id, created_at, status'
+        ? 'id, project_id, created_at, status, category, sc_status, uni_status'
+        : 'id, project_id, created_at, status, category'
       const [
         { data: projects },
         { data: clientProjects },
@@ -1479,7 +1479,8 @@ async function handleRoute(request, context) {
       const fieldJobsByWeek = weekKeys.map(key => ({ key, label: key, count: byWeekMap[key] || 0 }))
 
       // ===== NEW ANALYTICS: Job Card Metrics =====
-      const scJobs = (jobs || []).filter(j => j.category === 'Stand Count' || !j.category || !j.uni_status)
+      // Match the same category-based logic used in the per-project dashboard
+      const scJobs = (jobs || []).filter(j => (j.category || 'Stand Count') === 'Stand Count')
       const uniJobs = (jobs || []).filter(j => j.category === 'Uniformity')
       
       // Stand Count stats
