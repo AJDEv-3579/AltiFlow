@@ -1532,6 +1532,11 @@ function AdminDashboard({ analytics, projects, clientProjects, clients, onClick,
   const weekly = analytics.fieldJobsByWeek || []
   const maxMonth = Math.max(1, ...monthly.map(x => x.count || 0))
   const maxWeek = Math.max(1, ...weekly.map(x => x.count || 0))
+  
+  // New metrics
+  const jobCardStats = analytics.jobCardStats || { stand_count: { total: 0, done: 0, in_progress: 0, blocked: 0, need_delivery: 0 }, uniformity: { total: 0, done: 0, in_progress: 0, blocked: 0, need_delivery: 0 } }
+  const adminAssignments = analytics.adminAssignments || []
+  
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1539,6 +1544,87 @@ function AdminDashboard({ analytics, projects, clientProjects, clients, onClick,
         <StatCard icon={Building2} label="Clients" value={analytics.totals.clients} tone="emerald" />
         <StatCard icon={ClipboardList} label="Field Jobs" value={analytics.totals.field_jobs || 0} tone="violet" />
         <StatCard icon={ShieldAlert} label="Refly Flags" value={analytics.totals.refly} tone="red" />
+      </div>
+
+      {/* Job Card Stats - Stand Count & Uniformity */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* Stand Count Stats */}
+        <GlassCard className="p-5">
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4 flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-violet-400" />Stand Count Jobs
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400">Total Created</span>
+              <span className="text-2xl font-bold text-violet-300">{jobCardStats.stand_count?.total || 0}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
+                <div className="text-emerald-400 font-semibold text-lg">{jobCardStats.stand_count?.done || 0}</div>
+                <div className="text-emerald-400/60 text-[10px] uppercase tracking-wider">Delivered</div>
+              </div>
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+                <div className="text-blue-400 font-semibold text-lg">{jobCardStats.stand_count?.in_progress || 0}</div>
+                <div className="text-blue-400/60 text-[10px] uppercase tracking-wider">In Progress</div>
+              </div>
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                <div className="text-amber-400 font-semibold text-lg">{jobCardStats.stand_count?.need_delivery || 0}</div>
+                <div className="text-amber-400/60 text-[10px] uppercase tracking-wider">To Deliver</div>
+              </div>
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                <div className="text-red-400 font-semibold text-lg">{jobCardStats.stand_count?.blocked || 0}</div>
+                <div className="text-red-400/60 text-[10px] uppercase tracking-wider">Blocked</div>
+              </div>
+            </div>
+            {jobCardStats.stand_count?.total > 0 && (
+              <div className="mt-3 space-y-1">
+                <div className="text-[10px] text-zinc-500">Completion Rate</div>
+                <div className="w-full h-2 bg-zinc-900 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500" style={{ width: `${Math.round((jobCardStats.stand_count?.done / jobCardStats.stand_count?.total) * 100)}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+        </GlassCard>
+
+        {/* Uniformity Stats */}
+        <GlassCard className="p-5">
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4 flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-amber-400" />Uniformity Jobs
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400">Total Created</span>
+              <span className="text-2xl font-bold text-amber-300">{jobCardStats.uniformity?.total || 0}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
+                <div className="text-emerald-400 font-semibold text-lg">{jobCardStats.uniformity?.done || 0}</div>
+                <div className="text-emerald-400/60 text-[10px] uppercase tracking-wider">Delivered</div>
+              </div>
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+                <div className="text-blue-400 font-semibold text-lg">{jobCardStats.uniformity?.in_progress || 0}</div>
+                <div className="text-blue-400/60 text-[10px] uppercase tracking-wider">In Progress</div>
+              </div>
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                <div className="text-amber-400 font-semibold text-lg">{jobCardStats.uniformity?.need_delivery || 0}</div>
+                <div className="text-amber-400/60 text-[10px] uppercase tracking-wider">To Deliver</div>
+              </div>
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                <div className="text-red-400 font-semibold text-lg">{jobCardStats.uniformity?.blocked || 0}</div>
+                <div className="text-red-400/60 text-[10px] uppercase tracking-wider">Blocked</div>
+              </div>
+            </div>
+            {jobCardStats.uniformity?.total > 0 && (
+              <div className="mt-3 space-y-1">
+                <div className="text-[10px] text-zinc-500">Completion Rate</div>
+                <div className="w-full h-2 bg-zinc-900 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500" style={{ width: `${Math.round((jobCardStats.uniformity?.done / jobCardStats.uniformity?.total) * 100)}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+        </GlassCard>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1594,58 +1680,51 @@ function AdminDashboard({ analytics, projects, clientProjects, clients, onClick,
         </GlassCard>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Admin Assignments - Super Admin Only */}
+      {adminAssignments && adminAssignments.length > 0 && (
         <GlassCard className="p-5">
-          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Monthly Field Additions</div>
-          <div className="space-y-2">
-            {monthly.map(m => (
-              <div key={m.key} className="flex items-center gap-3 text-sm">
-                <div className="w-14 text-zinc-500 text-xs">{m.label}</div>
-                <div className="flex-1 h-2 bg-zinc-900 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500" style={{ width: `${((m.count || 0) / maxMonth) * 100}%` }} />
-                </div>
-                <div className="w-8 text-right font-mono text-xs text-zinc-400">{m.count || 0}</div>
-              </div>
-            ))}
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Admin Job Card Distribution</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-zinc-800/60 text-zinc-500">
+                  <th className="text-left py-2 px-3">Admin Name</th>
+                  <th className="text-center py-2 px-3">Total Jobs</th>
+                  <th className="text-center py-2 px-3">Stand Count</th>
+                  <th className="text-center py-2 px-3">Uniformity</th>
+                  <th className="text-center py-2 px-3">Delivered</th>
+                  <th className="text-center py-2 px-3">Projects</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/40">
+                {adminAssignments.map(admin => {
+                  const projectCount = Object.keys(admin.projects || {}).length
+                  const deliveryRate = admin.total_jobs > 0 ? Math.round((admin.done_count / admin.total_jobs) * 100) : 0
+                  return (
+                    <tr key={admin.admin_id} className="hover:bg-zinc-800/20 transition-colors">
+                      <td className="py-3 px-3 font-medium text-zinc-100">{admin.admin_name}</td>
+                      <td className="py-3 px-3 text-center">
+                        <span className="font-bold text-violet-300">{admin.total_jobs}</span>
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <span className="text-blue-300">{admin.sc_count}</span>
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <span className="text-amber-300">{admin.uni_count}</span>
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <span className="text-emerald-300 font-medium">{admin.done_count}</span>
+                        <div className="text-[9px] text-zinc-500">{deliveryRate}%</div>
+                      </td>
+                      <td className="py-3 px-3 text-center text-zinc-400">{projectCount}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         </GlassCard>
-
-        <GlassCard className="p-5">
-          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-4">Weekly Field Additions</div>
-          <div className="space-y-2">
-            {weekly.map(w => (
-              <div key={w.key} className="flex items-center gap-3 text-sm">
-                <div className="w-20 text-zinc-500 text-xs truncate">{w.label}</div>
-                <div className="flex-1 h-2 bg-zinc-900 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500" style={{ width: `${((w.count || 0) / maxWeek) * 100}%` }} />
-                </div>
-                <div className="w-8 text-right font-mono text-xs text-zinc-400">{w.count || 0}</div>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-      </div>
-
-      <GlassCard className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="text-xs uppercase tracking-wider text-zinc-500">Client Workload Distribution</div>
-        </div>
-        <div className="space-y-2">
-          {(analytics.byClient || []).slice().sort((a, b) => (b.count || 0) - (a.count || 0)).map(c => {
-            const total = (analytics.byClient || []).reduce((s, x) => s + (x.count || 0), 0) || 1
-            const pct = ((c.count || 0) / total) * 100
-            return (
-              <div key={c.id} className="flex items-center gap-3 text-sm">
-                <div className="w-40 truncate text-zinc-400">{c.name}</div>
-                <div className="flex-1 h-2 bg-zinc-900 rounded-full overflow-hidden">
-                  <div className="h-full bg-violet-500" style={{ width: `${pct}%` }} />
-                </div>
-                <div className="w-10 text-right font-mono text-xs text-zinc-400">{c.count || 0}</div>
-              </div>
-            )
-          })}
-        </div>
-      </GlassCard>
+      )}
     </div>
   )
 }

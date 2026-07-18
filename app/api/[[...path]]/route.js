@@ -1478,6 +1478,97 @@ async function handleRoute(request, context) {
       })
       const fieldJobsByWeek = weekKeys.map(key => ({ key, label: key, count: byWeekMap[key] || 0 }))
 
+      // ===== NEW ANALYTICS: Job Card Metrics =====
+      const scJobs = (jobs || []).filter(j => j.category === 'Stand Count' || !j.category || !j.uni_status)
+      const uniJobs = (jobs || []).filter(j => j.category === 'Uniformity' && j.uni_status)
+      
+      // Stand Count stats
+      const scStats = {
+        total: scJobs.length,
+        done: scJobs.filter(j => j.sc_status === 'Done').length,
+        in_progress: scJobs.filter(j => j.sc_status === 'In Progress').length,
+        blocked: scJobs.filter(j => j.sc_status === 'Blocked').length,
+        need_delivery: scJobs.filter(j => !j.sc_status || j.sc_status === 'Pending').length,
+      }
+      
+      // Uniformity stats
+      const uniStats = {
+        total: uniJobs.length,
+        done: uniJobs.filter(j => j.uni_status === 'Done').length,
+        in_progress: uniJobs.filter(j => j.uni_status === 'In Progress').length,
+        blocked: uniJobs.filter(j => j.uni_status === 'Blocked').length,
+        need_delivery: uniJobs.filter(j => !j.uni_status || j.uni_status === 'Pending').length,
+      }
+      
+      // Month-wise created and delivered jobs
+      const monthDeliveredMap = Object.fromEntries(monthKeys.map(k => [k, { created: 0, delivered: 0 }]))
+      for (const j of (jobs || [])) {
+        const createdAt = new Date(j.created_at)
+        if (!Number.isNaN(createdAt.getTime())) {
+          const mk = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, '0')}`
+          if (mk in monthDeliveredMap) {
+            monthDeliveredMap[mk].created += 1
+            // Check if delivered
+            const isDone = j.status === 'Done' || (supportsAdvancedJobSchema && j.sc_status === 'Done' && j.uni_status === 'Done')
+            if (isDone) monthDeliveredMap[mk].delivered += 1
+          }
+        }
+      }
+      
+      const jobsByMonthWithDelivery = monthKeys.map(key => {
+        const [y, m] = key.split('-')
+        return {
+          key,
+          label: `${m}/${y.slice(2)}`,
+          created: monthDeliveredMap[key]?.created || 0,
+          delivered: monthDeliveredMap[key]?.delivered || 0,
+        }
+      })
+      
+      // Admin assignments (super admin only) - job cards per admin per project
+      let adminAssignments = []
+      if (user.role === SUPER_ADMIN && supportsAdvancedJobSchema) {
+        const { data: allJobs } = await sb
+          .from('jobs')
+          .select('id, assigned_to, project_id, category, sc_status, uni_status, status')
+        
+        const { data: admins } = await sb
+          .from('users')
+          .select('id, username')
+          .eq('role', ADMIN)
+        
+        const adminMap = Object.fromEntries((admins || []).map(a => [a.id, a.username]))
+        
+        const adminJobMap = {}
+        for (const job of (allJobs || [])) {
+          if (!job.assigned_to) continue
+          if (!adminJobMap[job.assigned_to]) {
+            adminJobMap[job.assigned_to] = {
+              admin_id: job.assigned_to,
+              admin_name: adminMap[job.assigned_to] || 'Unknown',
+              total_jobs: 0,
+              sc_count: 0,
+              uni_count: 0,
+              done_count: 0,
+              projects: {},
+            }
+          }
+          adminJobMap[job.assigned_to].total_jobs += 1
+          if (job.category === 'Stand Count' || !job.category) adminJobMap[job.assigned_to].sc_count += 1
+          if (job.category === 'Uniformity') adminJobMap[job.assigned_to].uni_count += 1
+          if (job.status === 'Done' || (job.sc_status === 'Done' && job.uni_status === 'Done')) {
+            adminJobMap[job.assigned_to].done_count += 1
+          }
+          if (job.project_id) {
+            if (!adminJobMap[job.assigned_to].projects[job.project_id]) {
+              adminJobMap[job.assigned_to].projects[job.project_id] = 0
+            }
+            adminJobMap[job.assigned_to].projects[job.project_id] += 1
+          }
+        }
+        adminAssignments = Object.values(adminJobMap).sort((a, b) => b.total_jobs - a.total_jobs)
+      }
+
       return json({
         totals: {
           projects: (clientProjects || []).length,
@@ -1491,6 +1582,12 @@ async function handleRoute(request, context) {
         byStatus, bySla,
         fieldJobsByMonth,
         fieldJobsByWeek,
+        jobsByMonthWithDelivery,
+        jobCardStats: {
+          stand_count: scStats,
+          uniformity: uniStats,
+        },
+        adminAssignments: user.role === SUPER_ADMIN ? adminAssignments : [],
         byClient: (clients || []).map(c => ({ id: c.id, name: c.name, count: byClient[c.id] || 0 })),
       })
     }
