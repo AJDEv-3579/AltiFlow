@@ -242,9 +242,12 @@ CREATE TABLE IF NOT EXISTS public.jobs (
   -- Relations
   assigned_to  UUID REFERENCES public.users(id) ON DELETE SET NULL,
   created_by   UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  is_priority  BOOLEAN NOT NULL DEFAULT false,
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now()
 );
+
+ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS is_priority BOOLEAN DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS jobs_project_id_idx ON public.jobs (project_id);
 CREATE INDEX IF NOT EXISTS jobs_status_idx     ON public.jobs (status);

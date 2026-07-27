@@ -13,7 +13,7 @@ import {
   Plane, Plus, Radar, RefreshCw, Rocket, Search, Settings, Shield, ShieldAlert,
   Sparkles, Trash2, Upload, User, Users, X, Camera, FileCheck, Zap, ChevronLeft,
   CheckCircle2, Lock, Hash, Calendar, Box, Server, BarChart3, Bell, Sunrise, Sunset, Moon as MoonIcon, Sun as SunIcon,
-  FolderOpen, Download, Folder, FileText, Eye, EyeOff,
+  FolderOpen, Download, Folder, FileText, Eye, EyeOff, Star, Edit3,
 } from 'lucide-react'
 
 // ============== API HELPER ==============
@@ -1005,6 +1005,7 @@ function AdminApp({ user, onLogout, onEditProfile }) {
   const [recycleItems, setRecycleItems] = useState([])
   const [active, setActive] = useState(null)
   const [activeClientProject, setActiveClientProject] = useState(null)
+  const [detailJob, setDetailJob] = useState(null)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1169,7 +1170,6 @@ function AdminApp({ user, onLogout, onEditProfile }) {
 
   const tabs = [
     { k: 'dashboard', l: 'Dashboard', i: BarChart3 },
-    { k: 'assigned', l: 'Assigned Jobs', i: ClipboardList },
     { k: 'pipeline', l: 'Pipeline', i: Layers },
     { k: 'workspaces', l: 'Client Workspaces', i: FolderOpen },
     { k: 'clients', l: 'Clients', i: Building2 },
@@ -1218,15 +1218,13 @@ function AdminApp({ user, onLogout, onEditProfile }) {
         </div>
 
         {tab === 'dashboard' && <AdminDashboard analytics={analytics} projects={projects} clientProjects={clientProjects} clients={clients} onClick={setActive} onOpenWorkspace={setActiveClientProject} />}
-        {tab === 'assigned' && <AssignedJobsTab jobs={assignedJobs} onOpenWorkspaceById={projectId => {
-          const next = clientProjects.find(p => p.id === projectId)
-          if (next) setActiveClientProject(next)
-        }} />}
         {tab === 'pipeline' && (
           <div className="space-y-5">
             <JobPipelineKanban
               jobs={assignedJobs}
+              projects={clientProjects}
               onMove={moveJobCard}
+              onOpenJobDetail={setDetailJob}
               onOpenWorkspaceById={projectId => {
                 const next = clientProjects.find(p => p.id === projectId)
                 if (next) setActiveClientProject(next)
@@ -1244,7 +1242,10 @@ function AdminApp({ user, onLogout, onEditProfile }) {
         {tab === 'bin' && isSuperAdmin && <RecycleBinTab items={recycleItems} onRefresh={refresh} />}
       </div>
 
-      <AnimatePresence>{active && <ProjectDrawer project={active} onClose={() => setActive(null)} role={user.role} onChanged={refresh} />}</AnimatePresence>
+      <AnimatePresence>
+        {active && <ProjectDrawer project={active} onClose={() => setActive(null)} role={user.role} onChanged={refresh} />}
+        {detailJob && <JobDetailsModal job={detailJob} onClose={() => setDetailJob(null)} onRefresh={refreshAssignedJobsOnly} isAdmin={isSuperAdmin || user.role === 'Admin'} />}
+      </AnimatePresence>
     </div>
   )
 }
@@ -1374,7 +1375,223 @@ function getJobPipelineStage(job) {
   return 'Pending'
 }
 
-function JobPipelineCard({ job, onOpenWorkspaceById }) {
+function JobDetailsModal({ job, onClose, onRefresh, isAdmin = false }) {
+  const [comment, setComment] = useState('')
+  const [commentStage, setCommentStage] = useState('General')
+  const [busy, setBusy] = useState(false)
+  const [commentsLog, setCommentsLog] = useState(job.comments_log || [])
+
+  useEffect(() => {
+    setCommentsLog(job.comments_log || [])
+  }, [job.comments_log])
+
+  const stage = getJobPipelineStage(job)
+  const flights = Array.isArray(job.flights) ? job.flights : []
+  const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
+  const totalCSV = flights.reduce((s, f) => s + (f.csv_rows || 0), 0)
+
+  async function handleAddComment(e) {
+    e.preventDefault()
+    if (!comment.trim()) return
+    setBusy(true)
+    try {
+      const res = await api(`/client-projects/${job.project_id}/jobs/${job.id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({
+          comment: comment.trim(),
+          stage: commentStage,
+        }),
+      })
+      const newComment = res.comment || {
+        id: 'cmt-' + Date.now(),
+        username: 'You',
+        stage: commentStage,
+        comment: comment.trim(),
+        created_at: new Date().toISOString(),
+      }
+      setCommentsLog(prev => [...prev, newComment])
+      toast.success('Pipeline comment added')
+      setComment('')
+      onRefresh?.()
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        {/* Modal Header */}
+        <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between shrink-0 bg-zinc-900/40">
+          <div className="min-w-0 flex-1 pr-4">
+            <div className="text-xs text-zinc-500 font-mono truncate">{job.client_name || 'Client Workspace'} · {job.project_name || 'Project'}</div>
+            <div className="text-lg font-bold text-zinc-100 flex items-center gap-2 mt-0.5 truncate">
+              <Star
+                size={18}
+                className={`shrink-0 ${job.is_priority ? 'text-amber-400 fill-amber-400' : 'text-zinc-600'}`}
+                title={job.is_priority ? 'Priority Job' : 'Standard Job'}
+              />
+              <span className="truncate">{job.title}</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          {/* Status & Badges Bar */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-xs px-2.5 py-1 rounded-md border font-semibold ${
+              job.category === 'Uniformity'
+                ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
+              {job.category || 'Stand Count'}
+            </span>
+            <span className="text-xs px-2.5 py-1 rounded-md border bg-zinc-900/60 border-zinc-700 text-zinc-200 font-medium">
+              Stage: {stage}
+            </span>
+            {job.is_priority && (
+              <span className="text-xs px-2.5 py-1 rounded-md border bg-amber-500/20 border-amber-500/40 text-amber-300 font-bold uppercase tracking-wider">
+                ★ Priority Job
+              </span>
+            )}
+            {job.has_logs && (
+              <span className="text-xs px-2.5 py-1 rounded-md border bg-emerald-500/10 border-emerald-500/30 text-emerald-300 font-medium">
+                Logs Uploaded
+              </span>
+            )}
+          </div>
+
+          {/* Core Info Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Field Name</div>
+              <div className="font-semibold text-zinc-100 text-sm truncate" title={job.title}>{job.title}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Category</div>
+              <div className="font-semibold text-zinc-200 text-sm">{job.category || 'Stand Count'}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Priority</div>
+              <div className={job.is_priority ? 'font-bold text-amber-400 text-sm' : 'text-zinc-400 text-sm'}>
+                {job.is_priority ? '★ High Priority' : 'Standard'}
+              </div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Drone Name</div>
+              <div className="font-medium text-zinc-200 text-sm truncate" title={job.drone_name || 'N/A'}>{job.drone_name || 'N/A'}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Date of Capture</div>
+              <div className="font-medium text-zinc-200 text-sm">{job.capture_date || 'N/A'}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Assigned Admin</div>
+              <div className="font-medium text-zinc-200 text-sm truncate" title={job.assigned_to_name || 'Unassigned'}>{job.assigned_to_name || 'Unassigned'}</div>
+            </GlassCard>
+            <GlassCard className="p-3 col-span-2 sm:col-span-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Created Timestamp</div>
+              <div className="font-mono text-xs text-zinc-300">{job.created_at ? new Date(job.created_at).toLocaleString() : 'N/A'}</div>
+            </GlassCard>
+          </div>
+
+          {/* Per-flight breakdown table */}
+          {flights.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Flight Breakdown ({flights.length} flight{flights.length !== 1 ? 's' : ''})</div>
+              <div className="rounded-xl overflow-hidden border border-zinc-800/60 bg-zinc-900/30">
+                <div className="grid grid-cols-3 bg-zinc-900/80 text-[10px] uppercase tracking-wider text-zinc-500 px-4 py-2 font-semibold">
+                  <span>Flight</span><span className="text-center">Images</span><span className="text-center">CSV Rows</span>
+                </div>
+                {flights.map((fl, i) => (
+                  <div key={i} className="grid grid-cols-3 px-4 py-2.5 border-t border-zinc-800/40 text-xs">
+                    <span className="text-zinc-300 font-medium">Flight {i + 1}</span>
+                    <span className={`text-center font-mono ${fl.image_count != null ? 'text-blue-300' : 'text-zinc-600'}`}>
+                      {fl.image_count != null ? fl.image_count.toLocaleString() : '—'}
+                    </span>
+                    <span className={`text-center font-mono ${fl.csv_rows != null ? 'text-emerald-300' : 'text-zinc-600'}`}>
+                      {fl.csv_rows != null ? fl.csv_rows.toLocaleString() : '—'}
+                    </span>
+                  </div>
+                ))}
+                {flights.length > 1 && (
+                  <div className="grid grid-cols-3 px-4 py-2.5 border-t border-zinc-700/60 bg-zinc-900/60 text-xs font-semibold">
+                    <span className="text-zinc-400">Total</span>
+                    <span className="text-center font-mono text-blue-300">{totalImages.toLocaleString()}</span>
+                    <span className="text-center font-mono text-emerald-300">{totalCSV.toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Comments / Notes */}
+          {(job.comments || job.description) && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1.5">Notes & Comments</div>
+              <div className="text-xs text-zinc-300 bg-zinc-900/40 rounded-xl px-4 py-3 border border-zinc-800/60 leading-relaxed whitespace-pre-wrap">
+                {job.comments || job.description}
+              </div>
+            </div>
+          )}
+
+          {/* Pipeline Comment Timeline */}
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Pipeline Activity Log</div>
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              {commentsLog.length === 0 && (
+                <div className="text-xs text-zinc-600 italic">No timeline entries recorded yet.</div>
+              )}
+              {commentsLog.map(c => (
+                <div key={c.id} className="rounded-xl border border-zinc-800/60 bg-zinc-900/30 p-3 text-xs">
+                  <div className="flex items-center justify-between gap-3 text-[10px] text-zinc-500 mb-1">
+                    <span className="font-semibold text-zinc-400">{c.username || 'system'} · {c.stage || 'General'}</span>
+                    <span>{new Date(c.created_at).toLocaleString()}</span>
+                  </div>
+                  <div className="text-zinc-300 whitespace-pre-wrap">{c.comment}</div>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={handleAddComment} className="mt-3 flex gap-2">
+              <input
+                type="text"
+                value={comment}
+                onChange={e => setComment(e.target.value)}
+                placeholder="Add a stage update comment..."
+                className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 h-9 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600"
+              />
+              <Btn type="submit" size="sm" disabled={busy || !comment.trim()}>
+                {busy ? 'Saving...' : 'Post Comment'}
+              </Btn>
+            </form>
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="px-6 py-4 border-t border-zinc-800 shrink-0 flex items-center justify-between bg-zinc-900/40">
+          <div className="text-xs text-zinc-500">
+            ID: <span className="font-mono text-zinc-400">{job.id?.slice(0, 8)}</span>
+          </div>
+          <Btn onClick={onClose} variant="ghost" size="sm">Close</Btn>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function JobPipelineCard({ job, onOpenWorkspaceById, onOpenJobDetail }) {
   const stage = getJobPipelineStage(job)
   const stageStyles = {
     'Pending': 'text-zinc-400 border-zinc-700/60 bg-zinc-800/50',
@@ -1400,12 +1617,26 @@ function JobPipelineCard({ job, onOpenWorkspaceById }) {
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-zinc-100 truncate">{job.title}</div>
+          <div className="text-sm font-semibold text-zinc-100 truncate flex items-center gap-1.5">
+            <Star
+              size={14}
+              className={`shrink-0 ${job.is_priority ? 'text-amber-400 fill-amber-400' : 'text-zinc-600'}`}
+              title={job.is_priority ? 'Priority Job' : 'Standard Job'}
+            />
+            <span className="truncate">{job.title}</span>
+          </div>
           <div className="text-[11px] text-zinc-500 mt-1 truncate">{job.client_name || 'Unknown Client'} · {job.project_name || 'Unknown Workspace'}</div>
         </div>
-        <span className={`px-2 py-0.5 text-[10px] rounded border ${stageStyles[stage] || stageStyles['Pending']}`}>
-          {stage}
-        </span>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {job.is_priority && (
+            <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase tracking-wide flex items-center gap-0.5">
+              ★ Priority
+            </span>
+          )}
+          <span className={`px-2 py-0.5 text-[10px] rounded border ${stageStyles[stage] || stageStyles['Pending']}`}>
+            {stage}
+          </span>
+        </div>
       </div>
 
       <div className="flex items-center justify-between mt-3 gap-2">
@@ -1415,7 +1646,14 @@ function JobPipelineCard({ job, onOpenWorkspaceById }) {
         <Btn
           size="sm"
           variant="ghost"
-          onClick={(e) => { e.stopPropagation(); onOpenWorkspaceById?.(job.project_id) }}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (onOpenJobDetail) {
+              onOpenJobDetail(job)
+            } else {
+              onOpenWorkspaceById?.(job.project_id)
+            }
+          }}
           icon={ChevronRight}
         >
           Open
@@ -1450,19 +1688,49 @@ function JobPipelineColumn({ stage, count, children }) {
   )
 }
 
-function JobPipelineKanban({ jobs, onMove, onOpenWorkspaceById }) {
+function JobPipelineKanban({ jobs, projects = [], onMove, onOpenWorkspaceById, onOpenJobDetail }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const [active, setActive] = useState(null)
+  const [projectFilter, setProjectFilter] = useState('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
+
+  const projectOptions = useMemo(() => {
+    if (projects && projects.length > 0) return projects
+    const set = new Map()
+    for (const j of (jobs || [])) {
+      if (j.project_id && !set.has(j.project_id)) {
+        set.set(j.project_id, { id: j.project_id, name: j.project_name || ('Project ' + j.project_id.slice(0, 6)) })
+      }
+    }
+    return Array.from(set.values())
+  }, [projects, jobs])
+
+  const filteredJobs = useMemo(() => {
+    return (jobs || []).filter(j => {
+      if (projectFilter !== 'all' && j.project_id !== projectFilter) return false
+      if (categoryFilter !== 'all' && (j.category || 'Stand Count') !== categoryFilter) return false
+      return true
+    })
+  }, [jobs, projectFilter, categoryFilter])
 
   const grouped = useMemo(() => {
     const g = Object.fromEntries(JOB_PIPELINE_STAGES.map(s => [s, []]))
-    for (const j of (jobs || [])) {
+    for (const j of filteredJobs) {
       const s = getJobPipelineStage(j)
       if (!g[s]) g[s] = []
       g[s].push(j)
     }
+    // Priority sorting applies ONLY in Pipeline view (Pending column displays Priority jobs first)
+    if (g['Pending'] && g['Pending'].length > 0) {
+      g['Pending'].sort((a, b) => {
+        const pA = a.is_priority ? 1 : 0
+        const pB = b.is_priority ? 1 : 0
+        if (pA !== pB) return pB - pA
+        return 0
+      })
+    }
     return g
-  }, [jobs])
+  }, [filteredJobs])
 
   function onDragStart(event) {
     const id = String(event.active?.id || '')
@@ -1483,25 +1751,66 @@ function JobPipelineKanban({ jobs, onMove, onOpenWorkspaceById }) {
   }
 
   return (
-    <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActive(null)}>
-      <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4">
-        {JOB_PIPELINE_STAGES.map(stage => (
-          <JobPipelineColumn key={stage} stage={stage} count={(grouped[stage] || []).length}>
-            <AnimatePresence>
-              {(grouped[stage] || []).map(job => (
-                <JobPipelineCard key={job.id} job={job} onOpenWorkspaceById={onOpenWorkspaceById} />
-              ))}
-            </AnimatePresence>
-            {(grouped[stage] || []).length === 0 && (
-              <div className="text-center text-xs text-zinc-600 py-8 border border-dashed border-zinc-800/60 rounded-lg">Drop here</div>
-            )}
-          </JobPipelineColumn>
-        ))}
+    <div className="space-y-4">
+      {/* Filter Control Bar */}
+      <div className="flex flex-wrap items-center gap-3 bg-zinc-950/40 p-3 rounded-xl border border-zinc-800/60">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-zinc-400">Project:</span>
+          <select
+            value={projectFilter}
+            onChange={e => setProjectFilter(e.target.value)}
+            className="h-8 bg-zinc-900/60 border border-zinc-800 rounded-lg px-2.5 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer"
+          >
+            <option value="all">All Projects</option>
+            {projectOptions.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-zinc-400">Category:</span>
+          <select
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value)}
+            className="h-8 bg-zinc-900/60 border border-zinc-800 rounded-lg px-2.5 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer"
+          >
+            <option value="all">All Categories</option>
+            <option value="Stand Count">Stand Count</option>
+            <option value="Uniformity">Uniformity</option>
+          </select>
+        </div>
+
+        {(projectFilter !== 'all' || categoryFilter !== 'all') && (
+          <button
+            onClick={() => { setProjectFilter('all'); setCategoryFilter('all') }}
+            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 font-medium transition-colors ml-auto"
+          >
+            <X size={12} /> Clear Filters
+          </button>
+        )}
       </div>
-      <DragOverlay>
-        {active && <div className="opacity-90"><JobPipelineCard job={active} onOpenWorkspaceById={onOpenWorkspaceById} /></div>}
-      </DragOverlay>
-    </DndContext>
+
+      <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActive(null)}>
+        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4">
+          {JOB_PIPELINE_STAGES.map(stage => (
+            <JobPipelineColumn key={stage} stage={stage} count={(grouped[stage] || []).length}>
+              <AnimatePresence>
+                {(grouped[stage] || []).map(job => (
+                  <JobPipelineCard key={job.id} job={job} onOpenWorkspaceById={onOpenWorkspaceById} onOpenJobDetail={onOpenJobDetail} />
+                ))}
+              </AnimatePresence>
+              {(grouped[stage] || []).length === 0 && (
+                <div className="text-center text-xs text-zinc-600 py-8 border border-dashed border-zinc-800/60 rounded-lg">Drop here</div>
+              )}
+            </JobPipelineColumn>
+          ))}
+        </div>
+        <DragOverlay>
+          {active && <div className="opacity-90"><JobPipelineCard job={active} onOpenWorkspaceById={onOpenWorkspaceById} /></div>}
+        </DragOverlay>
+      </DndContext>
+    </div>
   )
 }
 
@@ -2622,7 +2931,7 @@ function ProjectDashboardTab({ project, jobs, teamMembers = [] }) {
 }
 
 // ============== JOB CARDS TAB ==============
-function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual = false }) {
+function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual = false, existingJobs = [] }) {
   const BLANK_FLIGHT = () => ({ image_count: null, csv_rows: null })
   const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
   const [submitted, setSubmitted] = useState(false)
@@ -2632,6 +2941,12 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
     has_logs: false, comments: '', assigned_to: '',
   })
   const [busy, setBusy] = useState(false)
+
+  const trimmedTitle = form.title.trim().toLowerCase()
+  const isDuplicateName = Boolean(
+    trimmedTitle &&
+    existingJobs.some(j => (j.title || '').trim().toLowerCase() === trimmedTitle && (j.category || 'Stand Count') === form.category)
+  )
 
   function setFlightCount(n) {
     const count = Math.max(1, Math.min(10, n))
@@ -2680,28 +2995,24 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
   async function submit(e) {
     e.preventDefault()
     setSubmitted(true)
-    const missingItems = []
-    if (!form.title.trim()) missingItems.push('Field Name')
-    if (!form.capture_date) missingItems.push('Date of Capture')
-    if (!form.drone_name.trim()) missingItems.push('Drone Name')
-    const missingFlights = form.flights
-      .map((f, idx) => ({ idx, missing: f.image_count === null }))
-      .filter(x => x.missing)
-      .map(x => `Flight ${x.idx + 1} Image Count`)
-    if (missingFlights.length > 0) missingItems.push(...missingFlights)
-
-    if (missingItems.length > 0) {
-      toast.error(`Missing required fields: ${missingItems.join(', ')}`)
+    if (!form.title.trim()) {
+      toast.error('Field Name is required')
       return
     }
+
+    if (isDuplicateName) {
+      toast.error(`Field name "${form.title.trim()}" already exists in the ${form.category} category. Duplicate field names are not allowed within the same category.`)
+      return
+    }
+
     setBusy(true)
     try {
       await api(`/client-projects/${project.id}/jobs`, {
         method: 'POST',
         body: JSON.stringify({
           title: form.title.trim(),
-          capture_date: form.capture_date,
-          drone_name: form.drone_name.trim(),
+          capture_date: form.capture_date || null,
+          drone_name: form.drone_name.trim() || null,
           category: form.category,
           flight_count: form.flight_count,
           flights: form.flights,
@@ -2717,10 +3028,8 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
 
   const missing = {
     title: submitted && !form.title.trim(),
-    capture: submitted && !form.capture_date,
-    drone: submitted && !form.drone_name.trim(),
   }
-  const valid = form.title.trim() && form.capture_date && form.drone_name.trim() && !form.flights.some(f => f.image_count === null)
+  const valid = form.title.trim() && !isDuplicateName
   const fieldErrorCls = hasError => hasError ? 'border-red-500/70 focus:border-red-400' : ''
 
   return (
@@ -2733,12 +3042,17 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
         {/* Row 1: Field Name + Capture Date + Category */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Field label="Field Name *">
-            <TextInput className={fieldErrorCls(missing.title)} value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g., Block A North" />
+            <TextInput className={fieldErrorCls(missing.title || isDuplicateName)} value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g., Block A North" />
+            {isDuplicateName && (
+              <div className="text-[11px] text-red-400 mt-1 flex items-center gap-1 font-medium">
+                <AlertTriangle size={12} className="shrink-0" /> Field name already exists in {form.category}.
+              </div>
+            )}
           </Field>
-          <Field label="Date of Capture *">
+          <Field label="Date of Capture">
             <input type="date" value={form.capture_date}
               onChange={e => setForm(f => ({ ...f, capture_date: e.target.value }))}
-              className={`w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 [color-scheme:dark] ${fieldErrorCls(missing.capture)}`} />
+              className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 [color-scheme:dark]" />
           </Field>
           <Field label="Category *">
             <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
@@ -2751,8 +3065,8 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
 
         {/* Row 2: Drone Name + Flight Count */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Drone Name *">
-            <TextInput className={fieldErrorCls(missing.drone)} value={form.drone_name} onChange={v => setForm(f => ({ ...f, drone_name: v }))} placeholder="e.g., DJI Mavic 3" />
+          <Field label="Drone Name">
+            <TextInput value={form.drone_name} onChange={v => setForm(f => ({ ...f, drone_name: v }))} placeholder="e.g., DJI Mavic 3" />
           </Field>
           <Field label="No. of Flights">
             <div className="flex items-center gap-2 h-11">
@@ -2865,6 +3179,313 @@ function AddFieldJobForm({ project, orgUsers, onDone, onCancel, canAssignManual 
         </div>
       </form>
     </GlassCard>
+  )
+}
+
+function AddFieldJobModal({ project, orgUsers, onDone, onCancel, canAssignManual = false, existingJobs = [] }) {
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onCancel}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-3xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between shrink-0 bg-zinc-900/40">
+          <div>
+            <div className="font-semibold text-zinc-100 flex items-center gap-2 text-lg">
+              <Plus size={20} className="text-blue-400" />
+              Add Job Card
+            </div>
+            <div className="text-xs text-zinc-500 mt-0.5">{project?.name || 'Workspace'} · Submit new field job card</div>
+          </div>
+          <button onClick={onCancel} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto flex-1">
+          <AddFieldJobForm
+            project={project}
+            orgUsers={orgUsers}
+            onDone={onDone}
+            onCancel={onCancel}
+            canAssignManual={canAssignManual}
+            existingJobs={existingJobs}
+          />
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function JobCardDetailModal({
+  job,
+  project,
+  orgUsers,
+  onClose,
+  onRefresh,
+  isAdmin,
+  canDelete,
+  canRequestDelete,
+  onEdit,
+  onDelete,
+  onRequestDelete,
+  onUpdateStage,
+}) {
+  const [comment, setComment] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [commentsLog, setCommentsLog] = useState(job.comments_log || [])
+  const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
+  const flights = Array.isArray(job.flights) ? job.flights : []
+  const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
+  const totalCSV = flights.reduce((s, f) => s + (f.csv_rows || 0), 0)
+
+  useEffect(() => {
+    setCommentsLog(job.comments_log || [])
+  }, [job.comments_log])
+
+  function activeStage(j) {
+    const stage = (j.category === 'Uniformity' ? j.uni_status : j.sc_status)
+    if (stage) return toUiJobStage(stage)
+    return toUiJobStage(j.status === 'Open' ? 'Pending' : j.status)
+  }
+
+  const currentStage = activeStage(job)
+
+  async function handleAddComment(e) {
+    e.preventDefault()
+    if (!comment.trim()) return
+    setBusy(true)
+    try {
+      const res = await api(`/client-projects/${project.id}/jobs/${job.id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ comment: comment.trim(), stage: 'General' }),
+      })
+      const newComment = res.comment || {
+        id: 'cmt-' + Date.now(),
+        username: 'You',
+        stage: 'General',
+        comment: comment.trim(),
+        created_at: new Date().toISOString(),
+      }
+      setCommentsLog(prev => [...prev, newComment])
+      toast.success('Stage update comment added')
+      setComment('')
+      onRefresh?.()
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between shrink-0 bg-zinc-900/40">
+          <div className="min-w-0 flex-1 pr-4">
+            <div className="text-xs text-zinc-500 font-mono truncate">{project?.name || 'Workspace'} · {job.category || 'Stand Count'}</div>
+            <div className="text-lg font-bold text-zinc-100 flex items-center gap-2 mt-0.5 truncate">
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !job.is_priority
+                  job.is_priority = nextVal
+                  onUpdateStage?.(job.id, 'is_priority', nextVal)
+                }}
+                className={`p-1 rounded-lg transition-colors ${
+                  job.is_priority ? 'text-amber-400 hover:text-amber-300' : 'text-zinc-600 hover:text-zinc-400'
+                }`}
+                title={job.is_priority ? 'Priority Job (click to unmark)' : 'Mark as Priority'}
+              >
+                <Star size={18} className={job.is_priority ? 'fill-amber-400 text-amber-400' : ''} />
+              </button>
+              <span className="truncate">{job.title}</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          {/* Status & Badges Bar */}
+          <div className="flex items-center justify-between gap-3 flex-wrap bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/60">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-xs px-2.5 py-1 rounded-md border font-semibold ${
+                job.category === 'Uniformity'
+                  ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                  : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
+                {job.category || 'Stand Count'}
+              </span>
+              <span className="text-xs px-2.5 py-1 rounded-md border bg-zinc-900/60 border-zinc-700 text-zinc-200 font-medium">
+                Stage: {currentStage}
+              </span>
+              {job.is_priority && (
+                <span className="text-xs px-2.5 py-1 rounded-md border bg-amber-500/20 border-amber-500/40 text-amber-300 font-bold uppercase tracking-wider">
+                  ★ Priority Job
+                </span>
+              )}
+              {job.has_logs && (
+                <span className="text-xs px-2.5 py-1 rounded-md border bg-emerald-500/10 border-emerald-500/30 text-emerald-300 font-medium">
+                  Logs Uploaded
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Metadata Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Field Name</div>
+              <div className="font-semibold text-zinc-100 text-sm truncate" title={job.title}>{job.title}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Drone Name</div>
+              <div className="font-medium text-zinc-200 text-sm truncate" title={job.drone_name || 'N/A'}>{job.drone_name || 'N/A'}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Date of Capture</div>
+              <div className="font-medium text-zinc-200 text-sm">{job.capture_date ? new Date(job.capture_date + 'T00:00:00').toLocaleDateString() : 'N/A'}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Uploaded Date</div>
+              <div className="font-mono text-xs text-zinc-300">{new Date(job.created_at).toLocaleDateString()}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Submitted By</div>
+              <div className="font-medium text-zinc-300 text-sm truncate" title={job.created_by_name || 'Unknown'}>{job.created_by_name || 'Unknown'}</div>
+            </GlassCard>
+            <GlassCard className="p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Assigned Admin</div>
+              {isAdmin && adminAssignees.length > 0 ? (
+                <select
+                  value={job.assigned_to || ''}
+                  onChange={e => onUpdateStage?.(job.id, 'assigned_to', e.target.value || null)}
+                  className="mt-1 w-full h-7 rounded-lg border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200 focus:outline-none cursor-pointer"
+                >
+                  <option value="">Unassigned</option>
+                  {adminAssignees.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                </select>
+              ) : (
+                <div className="font-medium text-zinc-200 text-sm truncate">{job.assigned_to_name || 'Unassigned'}</div>
+              )}
+            </GlassCard>
+          </div>
+
+          {/* Per-flight breakdown table */}
+          {flights.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Flight Breakdown ({flights.length} flight{flights.length !== 1 ? 's' : ''})</div>
+              <div className="rounded-xl overflow-hidden border border-zinc-800/60 bg-zinc-900/30">
+                <div className="grid grid-cols-3 bg-zinc-900/80 text-[10px] uppercase tracking-wider text-zinc-500 px-4 py-2 font-semibold">
+                  <span>Flight</span><span className="text-center">Images</span><span className="text-center">CSV Rows</span>
+                </div>
+                {flights.map((fl, i) => (
+                  <div key={i} className="grid grid-cols-3 px-4 py-2.5 border-t border-zinc-800/40 text-xs">
+                    <span className="text-zinc-300 font-medium">Flight {i + 1}</span>
+                    <span className={`text-center font-mono ${fl.image_count != null ? 'text-blue-300' : 'text-zinc-600'}`}>
+                      {fl.image_count != null ? fl.image_count.toLocaleString() : '—'}
+                    </span>
+                    <span className={`text-center font-mono ${fl.csv_rows != null ? 'text-emerald-300' : 'text-zinc-600'}`}>
+                      {fl.csv_rows != null ? fl.csv_rows.toLocaleString() : '—'}
+                    </span>
+                  </div>
+                ))}
+                {flights.length > 1 && (
+                  <div className="grid grid-cols-3 px-4 py-2.5 border-t border-zinc-700/60 bg-zinc-900/60 text-xs font-semibold">
+                    <span className="text-zinc-400">Total</span>
+                    <span className="text-center font-mono text-blue-300">{totalImages.toLocaleString()}</span>
+                    <span className="text-center font-mono text-emerald-300">{totalCSV.toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Notes / Comments */}
+          {(job.comments || job.description) && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1.5">Notes & Comments</div>
+              <div className="text-xs text-zinc-300 bg-zinc-900/40 rounded-xl px-4 py-3 border border-zinc-800/60 leading-relaxed whitespace-pre-wrap">
+                {job.comments || job.description}
+              </div>
+            </div>
+          )}
+
+          {/* Timeline & Stage Comments */}
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Pipeline Activity Log</div>
+            <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+              {commentsLog.length === 0 && (
+                <div className="text-xs text-zinc-600 italic">No stage updates yet.</div>
+              )}
+              {commentsLog.map(c => (
+                <div key={c.id} className="rounded-xl border border-zinc-800/60 bg-zinc-900/30 p-3 text-xs">
+                  <div className="flex items-center justify-between gap-3 text-[10px] text-zinc-500 mb-1">
+                    <span className="font-semibold text-zinc-400">{c.username || 'system'} · {c.stage || 'General'}</span>
+                    <span>{new Date(c.created_at).toLocaleString()}</span>
+                  </div>
+                  <div className="text-zinc-300 whitespace-pre-wrap">{c.comment}</div>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={handleAddComment} className="mt-3 flex gap-2">
+              <input
+                type="text"
+                value={comment}
+                onChange={e => setComment(e.target.value)}
+                placeholder="Add stage update comment..."
+                className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 h-9 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600"
+              />
+              <Btn type="submit" size="sm" disabled={busy || !comment.trim()}>
+                {busy ? 'Saving...' : 'Post Comment'}
+              </Btn>
+            </form>
+          </div>
+        </div>
+
+        {/* Footer Actions */}
+        <div className="px-6 py-4 border-t border-zinc-800 shrink-0 flex items-center justify-between bg-zinc-900/40 gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => { onClose(); onEdit?.(job) }}
+              className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors"
+            >
+              <Edit3 size={14} /> Edit Job Card
+            </button>
+            {canDelete && (
+              <button
+                onClick={() => { onClose(); onDelete?.(job.id) }}
+                className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 font-medium transition-colors"
+              >
+                <Trash2 size={14} /> Delete
+              </button>
+            )}
+            {canRequestDelete && (
+              <button
+                onClick={() => { onClose(); onRequestDelete?.(job) }}
+                className="flex items-center gap-1.5 text-xs text-amber-300 hover:text-amber-200 font-medium transition-colors"
+              >
+                <FileWarning size={14} /> Request Delete
+              </button>
+            )}
+          </div>
+
+          <Btn onClick={onClose} variant="ghost" size="sm">Close</Btn>
+        </div>
+      </motion.div>
+    </div>
   )
 }
 
@@ -3003,16 +3624,16 @@ function BulkUploadJobsModal({ project, onDone, onCancel }) {
     const comments = (obj['comments'] || '').trim()
 
     if (!fieldName) errors.push('field_name is required')
-    if (!captureDate || !/^\d{4}-\d{2}-\d{2}$/.test(captureDate)) errors.push('capture_date must be YYYY-MM-DD')
-    if (!droneName) errors.push('drone_name is required')
+    if (captureDate && !/^\d{4}-\d{2}-\d{2}$/.test(captureDate)) errors.push('capture_date must be YYYY-MM-DD format if provided')
 
     const VALID_CATS = ['Stand Count', 'Uniformity']
-    const category = VALID_CATS.includes(categoryRaw) ? categoryRaw : 'Stand Count'
-    if (!VALID_CATS.includes(categoryRaw)) errors.push('category must be "Stand Count" or "Uniformity"')
+    const category = categoryRaw && VALID_CATS.includes(categoryRaw) ? categoryRaw : 'Stand Count'
 
-    const flightCount = parseInt(flightCountRaw, 10)
-    if (isNaN(flightCount) || flightCount < 1 || flightCount > 10) errors.push('flight_count must be a number between 1 and 10')
-    if (!comments) errors.push('comments is required')
+    const flightCountParsed = flightCountRaw ? parseInt(flightCountRaw, 10) : 1
+    const flightCount = isNaN(flightCountParsed) ? 1 : Math.min(Math.max(flightCountParsed, 1), 10)
+    if (flightCountRaw && (isNaN(flightCountParsed) || flightCountParsed < 1 || flightCountParsed > 10)) {
+      errors.push('flight_count must be a number between 1 and 10')
+    }
 
     const flights = []
     const effectiveFlightCount = isNaN(flightCount) ? 1 : Math.min(Math.max(flightCount, 1), 10)
@@ -3317,14 +3938,305 @@ function BulkUploadJobsModal({ project, onDone, onCancel }) {
   )
 }
 
+function ImportCSVInfoModal({ jobs, onOpenImportCSV, onClose }) {
+  const lastStandCount = useMemo(() => {
+    return (jobs || []).filter(j => (j.category || 'Stand Count') === 'Stand Count').sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0]
+  }, [jobs])
+
+  const lastUniformity = useMemo(() => {
+    return (jobs || []).filter(j => j.category === 'Uniformity').sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0]
+  }, [jobs])
+
+  return (
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 shrink-0">
+          <div className="font-semibold text-zinc-100 flex items-center gap-2">
+            <FileText size={18} className="text-amber-400" />
+            Last Uploaded Job Cards
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-500 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5 overflow-y-auto max-h-[75vh]">
+          <div className="text-xs text-zinc-400">
+            Below are the field names and parameters from the last created job cards for each category to help you structure your CSV before importing:
+          </div>
+
+          {/* Stand Count Category */}
+          <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                Stand Count Category — Last Created Job
+              </span>
+              {lastStandCount && <span className="text-[10px] text-zinc-500">{new Date(lastStandCount.created_at).toLocaleDateString()}</span>}
+            </div>
+            {lastStandCount ? (
+              <div className="grid grid-cols-2 gap-2.5 text-xs text-zinc-300 bg-zinc-950/50 p-3 rounded-lg border border-zinc-800/50">
+                <div><span className="text-zinc-500">Field Name:</span> <strong className="text-zinc-100">{lastStandCount.title}</strong></div>
+                <div><span className="text-zinc-500">Drone:</span> <span className="text-zinc-200">{lastStandCount.drone_name || 'N/A'}</span></div>
+                <div><span className="text-zinc-500">Capture Date:</span> <span className="text-zinc-200">{lastStandCount.capture_date || 'N/A'}</span></div>
+                <div><span className="text-zinc-500">Flight Count:</span> <span className="text-zinc-200">{lastStandCount.flight_count || 1} flight(s)</span></div>
+                {lastStandCount.comments && (
+                  <div className="col-span-2 text-[11px] text-zinc-400 border-t border-zinc-800/50 pt-2 mt-1">
+                    <span className="text-zinc-500">Notes:</span> {lastStandCount.comments}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-500 italic bg-zinc-950/30 p-3 rounded-lg border border-zinc-800/40">
+                No Stand Count job card created yet.
+              </div>
+            )}
+          </div>
+
+          {/* Uniformity Category */}
+          <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-violet-400"></span>
+                Uniformity Category — Last Created Job
+              </span>
+              {lastUniformity && <span className="text-[10px] text-zinc-500">{new Date(lastUniformity.created_at).toLocaleDateString()}</span>}
+            </div>
+            {lastUniformity ? (
+              <div className="grid grid-cols-2 gap-2.5 text-xs text-zinc-300 bg-zinc-950/50 p-3 rounded-lg border border-zinc-800/50">
+                <div><span className="text-zinc-500">Field Name:</span> <strong className="text-zinc-100">{lastUniformity.title}</strong></div>
+                <div><span className="text-zinc-500">Drone:</span> <span className="text-zinc-200">{lastUniformity.drone_name || 'N/A'}</span></div>
+                <div><span className="text-zinc-500">Capture Date:</span> <span className="text-zinc-200">{lastUniformity.capture_date || 'N/A'}</span></div>
+                <div><span className="text-zinc-500">Flight Count:</span> <span className="text-zinc-200">{lastUniformity.flight_count || 1} flight(s)</span></div>
+                {lastUniformity.comments && (
+                  <div className="col-span-2 text-[11px] text-zinc-400 border-t border-zinc-800/50 pt-2 mt-1">
+                    <span className="text-zinc-500">Notes:</span> {lastUniformity.comments}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-500 italic bg-zinc-950/30 p-3 rounded-lg border border-zinc-800/40">
+                No Uniformity job card created yet.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t border-zinc-800 flex items-center justify-between bg-zinc-900/40 shrink-0">
+          <button onClick={onClose} className="px-4 py-2 text-xs text-zinc-400 hover:text-zinc-200 font-medium">Close</button>
+          <Btn icon={Upload} onClick={onOpenImportCSV} variant="primary">Import CSV</Btn>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function EditFieldJobFormModal({ project, job, orgUsers, onDone, onCancel, canAssignManual = false, existingJobs = [] }) {
+  const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
+  const [form, setForm] = useState({
+    title: job.title || '',
+    capture_date: job.capture_date || '',
+    drone_name: job.drone_name || '',
+    category: job.category || 'Stand Count',
+    flight_count: job.flight_count || (Array.isArray(job.flights) && job.flights.length > 0 ? job.flights.length : 1),
+    flights: Array.isArray(job.flights) && job.flights.length > 0 ? job.flights : [{ image_count: null, csv_rows: null }],
+    has_logs: Boolean(job.has_logs),
+    comments: job.comments || '',
+    assigned_to: job.assigned_to || '',
+  })
+  const [busy, setBusy] = useState(false)
+
+  const trimmedTitle = form.title.trim().toLowerCase()
+  const isDuplicateName = Boolean(
+    trimmedTitle &&
+    existingJobs.some(j => j.id !== job.id && (j.title || '').trim().toLowerCase() === trimmedTitle && (j.category || 'Stand Count') === form.category)
+  )
+
+  function setFlightCount(n) {
+    const count = Math.max(1, Math.min(10, n))
+    setForm(f => ({
+      ...f, flight_count: count,
+      flights: Array.from({ length: count }, (_, i) => f.flights[i] || { image_count: null, csv_rows: null }),
+    }))
+  }
+
+  function setFlightMetric(idx, key, value) {
+    setForm(f => {
+      const flights = [...f.flights]
+      const normalized = value === '' || value === null || value === undefined
+        ? null
+        : Math.max(0, Number(value) || 0)
+      flights[idx] = { ...flights[idx], [key]: normalized }
+      return { ...f, flights }
+    })
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!form.title.trim()) {
+      toast.error('Field Name is required')
+      return
+    }
+
+    if (isDuplicateName) {
+      toast.error(`Field name "${form.title.trim()}" already exists in the ${form.category} category.`)
+      return
+    }
+
+    setBusy(true)
+    try {
+      await api(`/client-projects/${project.id}/jobs/${job.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          title: form.title.trim(),
+          capture_date: form.capture_date || null,
+          drone_name: form.drone_name.trim() || null,
+          category: form.category,
+          flight_count: form.flight_count,
+          flights: form.flights,
+          has_logs: form.has_logs,
+          comments: form.comments.trim() || null,
+          assigned_to: canAssignManual ? (form.assigned_to || null) : undefined,
+        }),
+      })
+      toast.success('Job card updated successfully')
+      onDone()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
+        className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 shrink-0">
+          <div className="font-semibold text-zinc-100 flex items-center gap-2">
+            <Edit3 size={16} className="text-amber-400" />
+            Edit Field Job Card
+          </div>
+          <button onClick={onCancel} className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-500"><X size={16} /></button>
+        </div>
+
+        <form onSubmit={submit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          {/* Row 1: Field Name + Capture Date + Category */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Field label="Field Name *">
+              <TextInput value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} placeholder="e.g., Block A North" />
+              {isDuplicateName && (
+                <div className="text-[11px] text-red-400 mt-1 flex items-center gap-1 font-medium">
+                  <AlertTriangle size={12} className="shrink-0" /> Duplicate in {form.category}.
+                </div>
+              )}
+            </Field>
+            <Field label="Date of Capture">
+              <input type="date" value={form.capture_date}
+                onChange={e => setForm(f => ({ ...f, capture_date: e.target.value }))}
+                className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 [color-scheme:dark]" />
+            </Field>
+            <Field label="Category *">
+              <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer">
+                <option value="Stand Count">Stand Count</option>
+                <option value="Uniformity">Uniformity</option>
+              </select>
+            </Field>
+          </div>
+
+          {/* Row 2: Drone Name + Flight Count */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Drone Name">
+              <TextInput value={form.drone_name} onChange={v => setForm(f => ({ ...f, drone_name: v }))} placeholder="e.g., DJI Mavic 3" />
+            </Field>
+            <Field label="No. of Flights">
+              <div className="flex items-center gap-2 h-11">
+                <button type="button" onClick={() => setFlightCount(form.flight_count - 1)}
+                  className="w-10 h-10 rounded-lg bg-zinc-900/60 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 flex items-center justify-center text-lg font-bold shrink-0">−</button>
+                <div className="flex-1 h-10 bg-zinc-900/60 border border-zinc-800 rounded-lg flex items-center justify-center font-mono font-semibold text-zinc-100">
+                  {form.flight_count}
+                </div>
+                <button type="button" onClick={() => setFlightCount(form.flight_count + 1)}
+                  className="w-10 h-10 rounded-lg bg-zinc-900/60 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 flex items-center justify-center text-lg font-bold shrink-0">+</button>
+              </div>
+            </Field>
+          </div>
+
+          {/* Per-flight metrics */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Flight Metrics</div>
+            {form.flights.map((flight, i) => (
+              <div key={i} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-xl bg-zinc-900/40 border border-zinc-800/60">
+                <div className="text-xs font-semibold text-zinc-400 min-w-[70px] flex items-center gap-1.5 shrink-0">
+                  <span className="w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-300 font-mono">{i + 1}</span>
+                  <span>Flight {i + 1}</span>
+                </div>
+                <div className="flex-1 grid grid-cols-2 gap-2">
+                  <input type="number" min="0" value={flight.image_count ?? ''}
+                    onChange={e => setFlightMetric(i, 'image_count', e.target.value)}
+                    placeholder="Image count"
+                    className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 h-9 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600" />
+                  <input type="number" min="0" value={flight.csv_rows ?? ''}
+                    onChange={e => setFlightMetric(i, 'csv_rows', e.target.value)}
+                    placeholder="CSV rows"
+                    className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 h-9 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600" />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Logs & Comments */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+            <label className="flex items-center gap-2 cursor-pointer py-2">
+              <input type="checkbox" checked={form.has_logs} onChange={e => setForm(f => ({ ...f, has_logs: e.target.checked }))} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-amber-500" />
+              <span className="text-xs text-zinc-300">Logs Uploaded</span>
+            </label>
+            {canAssignManual && (
+              <div className="md:col-span-2">
+                <select value={form.assigned_to} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}
+                  className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-xs text-zinc-100 focus:outline-none">
+                  <option value="">Auto-assign (Round Robin)</option>
+                  {adminAssignees.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <Field label="Notes / Comments">
+            <textarea value={form.comments} onChange={e => setForm(f => ({ ...f, comments: e.target.value }))}
+              placeholder="Capture notes or comments..." rows={2}
+              className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600" />
+          </Field>
+
+          <div className="pt-3 border-t border-zinc-800 flex items-center justify-between shrink-0">
+            <button type="button" onClick={onCancel} className="px-4 py-2 text-xs text-zinc-400 hover:text-zinc-200 font-medium">Cancel</button>
+            <Btn type="submit" disabled={busy || !form.title.trim() || isDuplicateName} variant="primary">
+              {busy ? 'Saving…' : 'Save Changes'}
+            </Btn>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  )
+}
+
 function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
   const [showAdd, setShowAdd] = useState(false)
   const [showBulkUpload, setShowBulkUpload] = useState(false)
+  const [showCSVInfo, setShowCSVInfo] = useState(false)
+  const [editingJob, setEditingJob] = useState(null)
+  const [selectedJobModal, setSelectedJobModal] = useState(null)
   const [updating, setUpdating] = useState(null)
-  const [expanded, setExpanded] = useState(null)
   const [commentDrafts, setCommentDrafts] = useState({})
   const [commentBusy, setCommentBusy] = useState(null)
   const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const [ownerFilter, setOwnerFilter] = useState('all')
   const [assigneeFilter, setAssigneeFilter] = useState('all')
   const [stageFilter, setStageFilter] = useState('all')
@@ -3406,6 +4318,7 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
     const text = `${job.title || ''} ${job.drone_name || ''} ${job.created_by_name || ''} ${job.assigned_to_name || ''}`.toLowerCase()
     const q = search.trim().toLowerCase()
     if (q && !text.includes(q)) return false
+    if (categoryFilter !== 'all' && (job.category || 'Stand Count') !== categoryFilter) return false
     if (ownerFilter !== 'all' && (job.created_by_name || '') !== ownerFilter) return false
     if (assigneeFilter !== 'all') {
       const currentAssignee = job.assigned_to_name || 'Unassigned'
@@ -3439,24 +4352,40 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
         <div className="text-sm text-zinc-400">{filteredJobs.length} of {jobs.length} field{jobs.length !== 1 ? 's' : ''}</div>
         {!showAdd && (
           <div className="flex items-center gap-2">
-            <Btn variant="ghost" size="sm" icon={Upload} onClick={() => setShowBulkUpload(true)}>
-              Bulk Import CSV
-            </Btn>
+            <div className="flex items-center border border-zinc-800 rounded-xl overflow-hidden bg-zinc-900/50">
+              <Btn variant="ghost" size="sm" icon={Upload} onClick={() => setShowBulkUpload(true)} className="rounded-r-none border-0">
+                Bulk Import CSV
+              </Btn>
+              <button
+                type="button"
+                onClick={() => setShowCSVInfo(true)}
+                className="px-2.5 h-8 bg-zinc-800/60 hover:bg-zinc-700/80 text-zinc-300 border-l border-zinc-800 flex items-center gap-1 text-xs transition"
+                title="View Last Uploaded Job Cards"
+              >
+                <FileText size={13} className="text-amber-400" />
+                <span className="text-[10px] text-zinc-400">▾</span>
+              </button>
+            </div>
             <Btn onClick={() => setShowAdd(true)} icon={Plus} variant="primary">Add Field</Btn>
           </div>
         )}
       </div>
 
       <GlassCard className="p-4">
-        <div className="grid md:grid-cols-4 gap-2">
+        <div className="grid md:grid-cols-5 gap-2">
           <div className="md:col-span-2">
             <TextInput value={search} onChange={setSearch} placeholder="Search field name, owner, assignee, drone..." />
           </div>
-          <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600">
+          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer">
+            <option value="all">All Categories</option>
+            <option value="Stand Count">Stand Count</option>
+            <option value="Uniformity">Uniformity</option>
+          </select>
+          <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer">
             <option value="all">All Owners</option>
             {ownerOptions.map(name => <option key={name} value={name}>{name}</option>)}
           </select>
-          <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600">
+          <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer">
             <option value="all">All Assignees</option>
             <option value="Unassigned">Unassigned</option>
             {assigneeOptions.map(name => <option key={name} value={name}>{name}</option>)}
@@ -3477,15 +4406,24 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
 
       <AnimatePresence>
         {showAdd && (
-          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-            <AddFieldJobForm
-              project={project}
-              orgUsers={orgUsers}
-              canAssignManual={isAdmin}
-              onDone={() => { setShowAdd(false); onRefresh(project.id, { useCache: false }) }}
-              onCancel={() => setShowAdd(false)}
-            />
-          </motion.div>
+          <AddFieldJobModal
+            project={project}
+            orgUsers={orgUsers}
+            canAssignManual={isAdmin}
+            existingJobs={jobs}
+            onDone={() => { setShowAdd(false); onRefresh(project.id, { useCache: false }) }}
+            onCancel={() => setShowAdd(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showCSVInfo && (
+          <ImportCSVInfoModal
+            jobs={jobs}
+            onOpenImportCSV={() => { setShowCSVInfo(false); setShowBulkUpload(true) }}
+            onClose={() => setShowCSVInfo(false)}
+          />
         )}
       </AnimatePresence>
 
@@ -3521,20 +4459,34 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 items-start">
               <AnimatePresence>
                 {group.jobs.map(job => {
-                  const isOpen = expanded === job.id
                   const flights = Array.isArray(job.flights) ? job.flights : []
                   const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
                   const totalCSV    = flights.reduce((s, f) => s + (f.csv_rows    || 0), 0)
                   return (
                     <motion.div key={job.id} className="w-full" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
                       <GlassCard className="overflow-hidden w-full flex flex-col justify-between rounded-2xl border border-zinc-800/60 shadow-lg transition-all duration-200 hover:border-zinc-700/80">
-                        {/* Card header — click to expand */}
-                        <button type="button" onClick={() => setExpanded(isOpen ? null : job.id)}
-                          className="w-full text-left p-5 hover:bg-white/[0.01] transition-colors">
+                        {/* Card header — click opens modal popup */}
+                        <button type="button" onClick={() => setSelectedJobModal(job)}
+                          className="w-full text-left p-5 hover:bg-white/[0.01] transition-colors cursor-pointer">
                           <div className="flex flex-col gap-4 w-full">
-                            {/* Top row: Category/Logs on left, Stage on right */}
+                            {/* Top row: Category/Logs/Star on left, Stage on right */}
                             <div className="w-full flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    const nextVal = !job.is_priority
+                                    job.is_priority = nextVal
+                                    updateStage(job.id, 'is_priority', nextVal)
+                                  }}
+                                  className={`p-1 rounded-lg transition-colors ${
+                                    job.is_priority ? 'text-amber-400 hover:text-amber-300' : 'text-zinc-600 hover:text-zinc-400'
+                                  }`}
+                                  title={job.is_priority ? 'Priority Job (click to unmark)' : 'Mark as Priority'}
+                                >
+                                  <Star size={15} className={job.is_priority ? 'fill-amber-400 text-amber-400' : ''} />
+                                </button>
                                 {job.category && (
                                   <span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${
                                     job.category === 'Uniformity'
@@ -3576,149 +4528,6 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
                             )}
                           </div>
                         </button>
-
-                        {/* Expanded detail panel */}
-                        <AnimatePresence>
-                          {isOpen && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-                              <div className="border-t border-zinc-800/60 px-4 py-4 space-y-4">
-                                {/* Metadata details shown only after clicking */}
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-zinc-400 bg-zinc-900/30 rounded-xl p-3 border border-zinc-800/40">
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <Plane size={12} className="text-zinc-500 shrink-0" />
-                                    <span className="text-zinc-500">Drone:</span>
-                                    <span className="text-zinc-300 font-medium truncate" title={job.drone_name || 'No Drone'}>{job.drone_name || 'No Drone'}</span>
-                                  </div>
-                                  <div className="flex items-center gap-2 min-w-0 justify-end">
-                                    <Calendar size={12} className="text-zinc-500 shrink-0" />
-                                    <span className="text-zinc-500">Captured:</span>
-                                    <span className="text-zinc-300 font-medium">{job.capture_date ? new Date(job.capture_date + 'T00:00:00').toLocaleDateString() : 'No Date'}</span>
-                                  </div>
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <Clock size={12} className="text-zinc-500 shrink-0" />
-                                    <span className="text-zinc-500">Uploaded:</span>
-                                    <span className="text-zinc-300 font-medium">{new Date(job.created_at).toLocaleDateString()}</span>
-                                  </div>
-                                  {isAdmin && (
-                                    <div className="flex items-center gap-2 min-w-0 justify-end">
-                                      <User size={12} className="text-zinc-500 shrink-0" />
-                                      <span className="text-zinc-500">Assigned:</span>
-                                      <span className="text-zinc-300 font-medium truncate" title={job.assigned_to_name || 'Unassigned'}>{job.assigned_to_name || 'Unassigned'}</span>
-                                    </div>
-                                  )}
-                                </div>
-                                {/* Per-flight breakdown table */}
-                                {flights.length > 0 && (
-                                  <div>
-                                    <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-2">Flight Breakdown</div>
-                                    <div className="rounded-lg overflow-hidden border border-zinc-800/60">
-                                      <div className="grid grid-cols-3 bg-zinc-900/60 text-[10px] uppercase tracking-wider text-zinc-600 px-3 py-2">
-                                        <span>Flight</span><span className="text-center">Images</span><span className="text-center">CSV Rows</span>
-                                      </div>
-                                      {flights.map((fl, i) => (
-                                        <div key={i} className="grid grid-cols-3 px-3 py-2.5 border-t border-zinc-800/40 text-sm">
-                                          <span className="text-zinc-400 text-xs">Flight {i + 1}</span>
-                                          <span className={`text-center font-mono text-xs ${fl.image_count != null ? 'text-blue-300' : 'text-zinc-600'}`}>
-                                            {fl.image_count != null ? fl.image_count.toLocaleString() : '—'}
-                                          </span>
-                                          <span className={`text-center font-mono text-xs ${fl.csv_rows != null ? 'text-emerald-300' : 'text-zinc-600'}`}>
-                                            {fl.csv_rows != null ? fl.csv_rows.toLocaleString() : '—'}
-                                          </span>
-                                        </div>
-                                      ))}
-                                      {flights.length > 1 && (
-                                        <div className="grid grid-cols-3 px-3 py-2.5 border-t border-zinc-700/60 bg-zinc-900/30 text-xs font-semibold">
-                                          <span className="text-zinc-500">Total</span>
-                                          <span className="text-center font-mono text-blue-300">{totalImages.toLocaleString()}</span>
-                                          <span className="text-center font-mono text-emerald-300">{totalCSV.toLocaleString()}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Comments */}
-                                {(job.comments || job.description) && (
-                                  <div>
-                                    <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1.5">Comments</div>
-                                    <div className="text-sm text-zinc-300 bg-zinc-900/40 rounded-lg px-3 py-2.5 border border-zinc-800/60 leading-relaxed">
-                                      {job.comments || job.description}
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1.5">Pipeline Comment Timeline</div>
-                                  <div className="space-y-2 max-h-44 overflow-auto pr-1">
-                                    {(job.comments_log || []).length === 0 && (
-                                      <div className="text-xs text-zinc-600">No stage updates yet.</div>
-                                    )}
-                                    {(job.comments_log || []).map(c => (
-                                      <div key={c.id} className="rounded-lg border border-zinc-800/60 bg-zinc-900/30 px-3 py-2">
-                                        <div className="flex items-center justify-between gap-3 text-[10px] text-zinc-500">
-                                          <span>{c.username || 'system'} · {c.stage || 'General'}</span>
-                                          <span>{new Date(c.created_at).toLocaleString()}</span>
-                                        </div>
-                                        <div className="text-xs text-zinc-300 mt-1 whitespace-pre-wrap">{c.comment}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-
-                                  <div className="mt-2 flex gap-2">
-                                    <textarea
-                                      value={commentDrafts[job.id] || ''}
-                                      onChange={e => setCommentDrafts(prev => ({ ...prev, [job.id]: e.target.value }))}
-                                      rows={2}
-                                      placeholder="Add stage update comment..."
-                                      className="flex-1 bg-zinc-900/60 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none"
-                                    />
-                                    <Btn
-                                      size="sm"
-                                      onClick={() => addPipelineComment(job.id)}
-                                      disabled={commentBusy === job.id || !(commentDrafts[job.id] || '').trim()}
-                                    >
-                                      {commentBusy === job.id ? 'Saving...' : 'Add'}
-                                    </Btn>
-                                  </div>
-                                </div>
-
-                                {/* Footer */}
-                                <div className="flex items-center justify-between text-[11px] text-zinc-600 pt-1 gap-3 flex-wrap">
-                                  <div className="flex items-center gap-3 flex-wrap">
-                                    <span>Submitted by {job.created_by_name || 'unknown'}</span>
-                                    {isAdmin && adminAssignees.length > 0 && (
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-zinc-500">Assigned to</span>
-                                        <select
-                                          value={job.assigned_to || ''}
-                                          onChange={e => updateStage(job.id, 'assigned_to', e.target.value || null)}
-                                          disabled={updating === job.id + 'assigned_to'}
-                                          className="h-7 rounded-lg border border-zinc-700 bg-zinc-900/60 px-2 text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
-                                        >
-                                          <option value="">Unassigned</option>
-                                          {adminAssignees.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-                                        </select>
-                                      </div>
-                                    )}
-                                  </div>
-                                  {canDelete && (
-                                    <button onClick={() => deleteJob(job.id)}
-                                      className="flex items-center gap-1.5 text-red-400 hover:text-red-300 transition-colors">
-                                      <Trash2 size={12} /> Delete
-                                    </button>
-                                  )}
-                                  {canRequestDelete && (
-                                    <button onClick={() => requestDeleteJob(job)}
-                                      className="flex items-center gap-1.5 text-amber-300 hover:text-amber-200 transition-colors">
-                                      <FileWarning size={12} /> Request Delete
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
                       </GlassCard>
                     </motion.div>
                   )
@@ -3728,6 +4537,42 @@ function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
           </div>
         ))}
       </div>
+
+      <AnimatePresence>
+        {selectedJobModal && (
+          <JobCardDetailModal
+            job={selectedJobModal}
+            project={project}
+            orgUsers={orgUsers}
+            onClose={() => setSelectedJobModal(null)}
+            onRefresh={onRefresh}
+            isAdmin={isAdmin}
+            canDelete={canDelete}
+            canRequestDelete={canRequestDelete}
+            onEdit={setEditingJob}
+            onDelete={deleteJob}
+            onRequestDelete={requestDeleteJob}
+            onUpdateStage={updateStage}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {editingJob && (
+          <EditFieldJobFormModal
+            project={project}
+            job={editingJob}
+            orgUsers={orgUsers}
+            canAssignManual={isAdmin}
+            existingJobs={jobs}
+            onDone={() => {
+              setEditingJob(null)
+              onRefresh()
+            }}
+            onCancel={() => setEditingJob(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -4310,6 +5155,106 @@ function IssueTrackerTab({ project, jobs, onRefresh }) {
   )
 }
 
+function ProjectSwitcherDropdown({ currentProject, projects = [], onSwitchProject }) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const dropdownRef = useRef(null)
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return projects
+    const q = search.toLowerCase()
+    return projects.filter(p => (p.name || '').toLowerCase().includes(q) || (p.type || '').toLowerCase().includes(q))
+  }, [projects, search])
+
+  return (
+    <div className="relative min-w-0 flex-1" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-3 px-3.5 py-1.5 rounded-xl border border-zinc-800/80 bg-zinc-900/60 hover:bg-zinc-800/70 transition-colors text-left group max-w-full sm:max-w-md cursor-pointer"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-sm text-zinc-100 truncate group-hover:text-white flex items-center gap-1.5">
+            <span>{currentProject.name}</span>
+          </div>
+          <div className="text-[11px] text-zinc-500 truncate">{currentProject.type} · {currentProject.head}</div>
+        </div>
+        <ChevronDown size={16} className={`text-zinc-400 shrink-0 transition-transform ${open ? 'rotate-180 text-blue-400' : ''}`} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.98 }}
+            transition={{ duration: 0.15 }}
+            className="absolute left-0 top-full mt-2 w-72 sm:w-80 bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden"
+          >
+            {/* Search input */}
+            <div className="p-3 border-b border-zinc-800/80 bg-zinc-900/40 sticky top-0 z-10">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-2.5 text-zinc-500" />
+                <input
+                  type="text"
+                  autoFocus
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search projects..."
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-600"
+                />
+              </div>
+            </div>
+
+            {/* Scrollable list */}
+            <div className="max-h-60 overflow-y-auto p-1.5 space-y-1">
+              {filtered.length === 0 ? (
+                <div className="px-3 py-4 text-xs text-zinc-500 text-center">No projects found.</div>
+              ) : (
+                filtered.map(p => {
+                  const isSelected = p.id === currentProject.id
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        if (!isSelected) onSwitchProject?.(p.id)
+                        setOpen(false)
+                        setSearch('')
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center justify-between transition-colors ${
+                        isSelected
+                          ? 'bg-blue-500/15 text-blue-300 font-semibold border border-blue-500/30'
+                          : 'text-zinc-300 hover:bg-zinc-900/80'
+                      }`}
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="truncate font-medium">{p.name}</div>
+                        <div className="text-[10px] text-zinc-500 truncate">{p.type} · {p.head}</div>
+                      </div>
+                      {isSelected && <CheckCircle2 size={14} className="text-blue-400 shrink-0" />}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ============== PROJECT DETAIL PAGE ==============
 function ProjectDetailPage({
   project,
@@ -4397,23 +5342,13 @@ function ProjectDetailPage({
     return r.user
   }
   useEffect(() => {
-    const nextId = project.id
-    setSwitchingProject(true)
-    loadJobs(nextId, { useCache: true }).finally(() => setSwitchingProject(false))
-    if (isAdmin) loadAssignments(nextId)
-    else setAssignedUserIds([])
-  }, [project.id, isAdmin])
-  useEffect(() => {
-    if (!['jobs', 'issues', 'tracker'].includes(tab)) return
-    const t = setInterval(() => {
-      loadJobs(project.id, { useCache: false })
-    }, 15000)
-    return () => clearInterval(t)
-  }, [project.id, tab])
+    loadJobs(project.id)
+    loadAssignments(project.id)
+  }, [project.id])
 
   async function deleteWorkspace() {
     if (!canDeleteWorkspace) return
-    if (!confirm('Delete this project workspace? It can be restored from Bin.')) return
+    if (!confirm('Delete this workspace? It can be restored from Bin.')) return
     try {
       await api(`/client-projects/${project.id}`, { method: 'DELETE' })
       toast.success('Workspace moved to Bin')
@@ -4465,33 +5400,23 @@ function ProjectDetailPage({
               <ChevronLeft size={18} />
             </button>
           )}
-          {showProjectSwitcher && projects.length > 1 && (
-            <div className="w-56 shrink-0">
-              <select
-                value={projectInfo.id}
-                onChange={e => {
-                  const nextId = e.target.value
-                  if (nextId === projectInfo.id) return
-                  onSwitchProject?.(nextId)
-                }}
-                className="w-full h-10 bg-zinc-900/70 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 cursor-pointer"
-              >
-                {projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-              {switchingProject && <div className="text-[10px] text-zinc-500 mt-1">Switching project...</div>}
+          {showProjectSwitcher && projects.length > 1 ? (
+            <ProjectSwitcherDropdown
+              currentProject={projectInfo}
+              projects={projects}
+              onSwitchProject={onSwitchProject}
+            />
+          ) : (
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/20 to-violet-500/20 flex items-center justify-center shrink-0">
+                <Layers size={16} className="text-blue-300" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-semibold truncate">{projectInfo.name}</div>
+                <div className="text-[11px] text-zinc-500 truncate">{projectInfo.type} · {projectInfo.head}</div>
+              </div>
             </div>
           )}
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/20 to-violet-500/20 flex items-center justify-center shrink-0">
-              <Layers size={16} className="text-blue-300" />
-            </div>
-            <div className="min-w-0">
-              <div className="font-semibold truncate">{projectInfo.name}</div>
-              <div className="text-[11px] text-zinc-500 truncate">{projectInfo.type} · {projectInfo.head}</div>
-            </div>
-          </div>
           <div className="flex items-center gap-2 shrink-0">
             <PeriodChip />
             {canEditProjectInfo && <Btn onClick={() => setShowEditProject(true)} variant="outline" size="sm" icon={Settings}>Edit Info</Btn>}

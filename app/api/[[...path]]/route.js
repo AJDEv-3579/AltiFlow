@@ -83,8 +83,30 @@ async function hasJobsAdvancedSchema() {
   return jobsAdvancedSchemaAvailable
 }
 
-function getJobsSelectColumns(advanced, includeUserRelations = false) {
-  const base = 'id, project_id, title, description, status, assigned_to, created_by, created_at, updated_at'
+let jobsPrioritySchemaAvailable = null
+async function hasJobsPrioritySchema() {
+  if (jobsPrioritySchemaAvailable === true) return true
+  const { error } = await sb
+    .from('jobs')
+    .select('id, is_priority')
+    .limit(1)
+  if (!error) jobsPrioritySchemaAvailable = true
+  return !error
+}
+
+function extractPriority(j) {
+  if (!j) return false
+  if (j.is_priority !== undefined && j.is_priority !== null) return Boolean(j.is_priority)
+  if (Array.isArray(j.flights) && j.flights[0] && j.flights[0].__is_priority !== undefined) {
+    return Boolean(j.flights[0].__is_priority)
+  }
+  return false
+}
+
+async function getJobsSelectColumns(advanced, includeUserRelations = false) {
+  const priorityAvailable = await hasJobsPrioritySchema()
+  const basePriority = priorityAvailable ? ', is_priority' : ''
+  const base = `id, project_id, title, description, status, assigned_to, created_by, created_at, updated_at${basePriority}`
   const advancedCols = 'sc_status, uni_status, category, capture_date, drone_name, flight_count, flights, has_logs, comments'
   const relations = includeUserRelations ? ', assigned_user:assigned_to(username), creator:created_by(username)' : ''
   return advanced ? `${base}, ${advancedCols}${relations}` : `${base}${relations}`
@@ -389,17 +411,23 @@ async function audit(projectId, user, desc) {
 }
 
 async function addJobComment(jobId, user, comment, stage = 'General') {
-  if (!comment?.trim()) return
-  await sb.from('job_comments').insert({
+  if (!comment?.trim()) return null
+  const newRow = {
     id: uuidv4(),
     job_id: jobId,
     user_id: user?.id || null,
     username: user?.username || 'system',
     stage,
     comment: comment.trim(),
-  })
+    created_at: new Date().toISOString(),
+  }
+  const { error } = await sb.from('job_comments').insert(newRow)
+  if (error) {
+    console.warn('[Comments] addJobComment insert error:', error.message)
+  }
   invalidateCachedLists('jobs-by-project:')
   invalidateCachedLists('jobs-assigned:')
+  return newRow
 }
 
 async function sendExpoPushNotification({ to, title, body, data = {} }) {
@@ -514,6 +542,14 @@ async function handleRoute(request, context) {
   const method = request.method
   try {
     await ensureSeed()
+
+    if (seedError && route !== '/health') {
+      return json({
+        error: 'Database connection failed',
+        details: seedError,
+        help: 'Please configure NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local and execute supabase/schema.sql in your Supabase SQL Editor.'
+      }, 500)
+    }
 
     if ((route === '/root' || route === '/') && method === 'GET') {
       return json({ message: 'Altiflow API online', service: 'altiflow', backend: 'supabase' })
@@ -1610,7 +1646,7 @@ async function handleRoute(request, context) {
 
       const supportsAdvancedJobSchema = await hasJobsAdvancedSchema()
       let q = sb.from('jobs')
-        .select(getJobsSelectColumns(supportsAdvancedJobSchema, false))
+        .select(await getJobsSelectColumns(supportsAdvancedJobSchema, false))
         .order('updated_at', { ascending: false })
         .range(from, to)
       if (user.role === ADMIN) q = q.eq('assigned_to', user.id)
@@ -1655,6 +1691,7 @@ async function handleRoute(request, context) {
             : ((j.status === 'In Progress' || j.status === 'Done') ? j.status : 'Pending')
           return {
             ...j,
+            is_priority: extractPriority(j),
             category: cat,
             sc_status: cat === 'Uniformity' ? 'Yet to Upload' : (j.sc_status || legacyStage),
             uni_status: cat === 'Stand Count' ? 'Yet to Upload' : (j.uni_status || legacyStage),
@@ -1812,7 +1849,7 @@ async function handleRoute(request, context) {
         const supportsAdvancedJobSchema = await hasJobsAdvancedSchema()
         const { data, error } = await sb
           .from('jobs')
-          .select(getJobsSelectColumns(supportsAdvancedJobSchema, true))
+          .select(await getJobsSelectColumns(supportsAdvancedJobSchema, true))
           .eq('project_id', projectId)
           .order('updated_at', { ascending: false })
           .range(from, to)
@@ -1834,6 +1871,7 @@ async function handleRoute(request, context) {
           const fallback = j.status === 'Blocked' ? 'Cancelled' : (j.status === 'Open' ? 'Pending' : j.status)
           return {
             ...j,
+            is_priority: extractPriority(j),
             category: cat,
             sc_status: cat === 'Uniformity' ? 'Yet to Upload' : (j.sc_status || fallback),
             uni_status: cat === 'Stand Count' ? 'Yet to Upload' : (j.uni_status || fallback),
@@ -1851,14 +1889,8 @@ async function handleRoute(request, context) {
         const body = await request.json()
         const { title, capture_date, drone_name, category, flight_count, flights, has_logs, comments, assigned_to } = body
         if (!title?.trim()) return json({ error: 'Title required' }, 400)
-        if (!capture_date) return json({ error: 'Capture date required' }, 400)
-        if (!drone_name?.trim()) return json({ error: 'Drone name required' }, 400)
         const VALID_CATS = ['Stand Count', 'Uniformity']
         if (category && !VALID_CATS.includes(category)) return json({ error: 'Invalid category' }, 400)
-        if (!flight_count || parseInt(flight_count, 10) < 1) return json({ error: 'Flight count required' }, 400)
-        if (!Array.isArray(flights) || flights.length < 1) return json({ error: 'Flight data required' }, 400)
-        const invalidFlight = flights.some(f => f?.image_count === null || f?.image_count === undefined)
-        if (invalidFlight) return json({ error: 'Each flight requires image count' }, 400)
         let assigneeId = null
 
         if (CLIENT_ROLES.includes(user.role)) {
@@ -1880,6 +1912,22 @@ async function handleRoute(request, context) {
           if (assigneeErr || !assignee) return json({ error: 'assigned_to must be an Admin user' }, 400)
         }
 
+        const targetCategory = VALID_CATS.includes(category) ? category : 'Stand Count'
+        const { data: existingJobs } = await sb
+          .from('jobs')
+          .select('id, title, category')
+          .eq('project_id', projectId)
+
+        if (Array.isArray(existingJobs)) {
+          const isDup = existingJobs.some(j =>
+            (j.title || '').trim().toLowerCase() === title.trim().toLowerCase() &&
+            (j.category || 'Stand Count') === targetCategory
+          )
+          if (isDup) {
+            return json({ error: `A field named "${title.trim()}" already exists in the ${targetCategory} category.` }, 409)
+          }
+        }
+
         const insertPayload = {
           id: uuidv4(),
           project_id: projectId,
@@ -1888,10 +1936,14 @@ async function handleRoute(request, context) {
           status: 'Open',
           created_by: user.id,
         }
+        const supportsPriority = await hasJobsPrioritySchema()
+        if (supportsPriority) {
+          insertPayload.is_priority = body.is_priority === true
+        }
         if (supportsAdvancedJobSchema) {
-          insertPayload.capture_date = capture_date
-          insertPayload.drone_name = drone_name.trim()
-          insertPayload.category = VALID_CATS.includes(category) ? category : 'Stand Count'
+          insertPayload.capture_date = capture_date || null
+          insertPayload.drone_name = drone_name?.trim() || null
+          insertPayload.category = targetCategory
           insertPayload.flight_count = flight_count || 1
           insertPayload.flights = Array.isArray(flights) ? flights : []
           insertPayload.has_logs = has_logs === true
@@ -1924,10 +1976,10 @@ async function handleRoute(request, context) {
 
       const { comment, stage } = await request.json()
       if (!comment?.trim()) return json({ error: 'comment required' }, 400)
-      await addJobComment(jobId, user, comment.trim(), stage || 'General')
+      const added = await addJobComment(jobId, user, comment.trim(), stage || 'General')
       invalidateCachedLists('jobs-by-project:')
       invalidateCachedLists('jobs-assigned:')
-      return json({ ok: true })
+      return json({ ok: true, comment: added })
     }
 
     const jobMatch = route.match(/^\/client-projects\/([^/]+)\/jobs\/([^/]+)$/)
@@ -1966,9 +2018,46 @@ async function handleRoute(request, context) {
           if (hasUniStatus) allowed.uni_status = toDbStage(body.uni_status)
           allowed.status = statusFromStage(body.uni_status)
         }
+        const newTitle = body.title ? body.title.trim() : currentJob.title
+        const newCategory = body.category && ['Stand Count', 'Uniformity'].includes(body.category) ? body.category : (currentJob.category || 'Stand Count')
+        if (body.title || body.category) {
+          const { data: existingJobs } = await sb
+            .from('jobs')
+            .select('id, title, category')
+            .eq('project_id', projectId)
+            .neq('id', jobId)
+
+          if (Array.isArray(existingJobs)) {
+            const isDup = existingJobs.some(j =>
+              (j.title || '').trim().toLowerCase() === newTitle.toLowerCase() &&
+              (j.category || 'Stand Count') === newCategory
+            )
+            if (isDup) {
+              return json({ error: `A field named "${newTitle}" already exists in the ${newCategory} category.` }, 409)
+            }
+          }
+        }
+
         if (body.title) allowed.title = body.title.trim()
+        if (body.capture_date !== undefined) allowed.capture_date = body.capture_date || null
+        if (body.drone_name !== undefined) allowed.drone_name = body.drone_name?.trim() || null
+        if (body.flight_count !== undefined) allowed.flight_count = Math.max(1, Math.min(10, Number(body.flight_count) || 1))
+        if (body.flights !== undefined && Array.isArray(body.flights)) allowed.flights = body.flights
         if (body.comments !== undefined && hasComments) allowed.comments = body.comments?.trim() || null
         if (body.has_logs !== undefined && hasLogs) allowed.has_logs = body.has_logs === true
+        const supportsPriority = await hasJobsPrioritySchema()
+        if (body.is_priority !== undefined) {
+          if (supportsPriority) {
+            allowed.is_priority = body.is_priority === true
+          } else {
+            const rawFlights = allowed.flights || currentJob.flights
+            const currentFlights = Array.isArray(rawFlights) && rawFlights.length > 0
+              ? [...rawFlights]
+              : [{ image_count: null, csv_rows: null }]
+            currentFlights[0] = { ...currentFlights[0], __is_priority: body.is_priority === true }
+            allowed.flights = currentFlights
+          }
+        }
         if (body.assigned_to !== undefined) {
           if (![ADMIN, SUPER_ADMIN].includes(user.role)) return json({ error: 'Only Admin can reassign jobs' }, 403)
           if (body.assigned_to) {
