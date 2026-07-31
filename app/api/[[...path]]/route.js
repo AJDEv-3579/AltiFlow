@@ -5,9 +5,27 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import crypto from 'crypto'
 import { supabaseAdmin as sb } from '@/lib/supabase'
+// Auth abstraction layer — delegates login/user-creation to the correct strategy
+// based on SUPABASE_AUTH_ENABLED flag. When false, behavior is 100% unchanged.
+import {
+  authenticateUser as authAdapterLogin,
+  getUserFromRequest as authAdapterGetUser,
+  createAppUser as authAdapterCreateUser,
+  getMigrationStatus,
+  linkUserToSupabaseAuth,
+  migrateAllUsersToSupabaseAuth,
+  stripSensitiveFields as strip_,
+  SUPER_ADMIN as SA,
+  ADMIN as AD,
+  CLIENT_ADMIN as CA,
+  CLIENT_USER as CU,
+  INTERNAL_ROLES as IR,
+  CLIENT_ROLES as CR,
+} from '@/lib/auth-adapter'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'altiflow_dev_secret'
 const DEFAULT_TEAM_PWD = 'WelcometoAlti@123'
+
 
 // ---------- Helpers ----------
 function corsify(response) {
@@ -572,27 +590,14 @@ async function handleRoute(request, context) {
     if (route === '/auth/login' && method === 'POST') {
       const { username, password } = await request.json()
       if (!username || !password) return json({ error: 'username & password required' }, 400)
-      
-      let user = null
-      const cleanUsername = username.trim()
-      if (await hasEmailColumn()) {
-        const { data } = await sb.from('users').select('*').or(`username.ilike.${cleanUsername},email.ilike.${cleanUsername}`).maybeSingle()
-        user = data
-      } else {
-        const { data } = await sb.from('users').select('*').ilike('username', cleanUsername).maybeSingle()
-        user = data
+      try {
+        // Delegates to auth-adapter.js — routes to custom or Supabase Auth based on flag.
+        // When SUPABASE_AUTH_ENABLED=false, this is 100% identical to the original bcrypt+JWT flow.
+        const { user, token, client } = await authAdapterLogin(username, password)
+        return json({ token, user: { ...user, client } })
+      } catch (e) {
+        return json({ error: e.message || 'Invalid credentials' }, e.status || 401)
       }
-
-      if (!user) return json({ error: 'Invalid credentials' }, 401)
-      const ok = await bcrypt.compare(password, user.password_hash)
-      if (!ok) return json({ error: 'Invalid credentials' }, 401)
-      const token = jwt.sign({ sub: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' })
-      let clientData = null
-      if (user.client_id) {
-        const { data } = await sb.from('clients').select('*').eq('id', user.client_id).maybeSingle()
-        clientData = data
-      }
-      return json({ token, user: { ...strip(user), client: clientData } })
     }
 
     if (route === '/auth/me' && method === 'GET') {
@@ -770,19 +775,24 @@ async function handleRoute(request, context) {
       if (exists) return json({ error: 'Username already exists' }, 409)
       const pwd = password || DEFAULT_TEAM_PWD
       const assignedClientId = user.role === CLIENT_ADMIN ? user.client_id : (CLIENT_ROLES.includes(role) ? (client_id || null) : null)
-      const newUser = {
-        id: uuidv4(), username: usernameVal,
-        password_hash: await bcrypt.hash(pwd, 10),
-        role, client_id: assignedClientId,
-        must_change_password: true,
+
+      // Delegate to auth adapter — handles both custom auth insert and optional Supabase Auth account creation
+      try {
+        const result = await authAdapterCreateUser({
+          id: uuidv4(),
+          username: usernameVal,
+          email: emailVal,
+          password: pwd,
+          role,
+          client_id: assignedClientId,
+          must_change_password: true,
+        })
+        return json({ user: result.user, default_password: result.default_password })
+      } catch (e) {
+        return json({ error: e.message }, 500)
       }
-      if (await hasEmailColumn()) {
-        newUser.email = emailVal
-      }
-      const { data, error } = await sb.from('users').insert(newUser).select().single()
-      if (error) return json({ error: error.message }, 500)
-      return json({ user: strip(data), default_password: pwd })
     }
+
 
     if (route.startsWith('/users/') && !route.includes('/request-deletion') && method === 'DELETE') {
       const user = await getUserFromRequest(request)
@@ -2107,6 +2117,61 @@ async function handleRoute(request, context) {
         return json({ ok: true })
       }
     }
+
+    // ─── SUPABASE AUTH MIGRATION ROUTES (Super-Admin only) ─────────────────────
+    // These routes support the phased migration from custom auth to Supabase Auth.
+    // They are non-destructive and safe to call at any time.
+    // Requires: supabase/migrations/add_supabase_auth_columns.sql to have been run.
+
+    // GET /admin/auth-migration/status — overview of migration progress for all users
+    if (route === '/admin/auth-migration/status' && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — Super-Admin only' }, 403)
+      const status = await getMigrationStatus()
+      return json(status)
+    }
+
+    // POST /admin/auth-migration/link-user/:userId — link one user to Supabase Auth
+    // Body: { send_invite: boolean } — if true, sends password reset email to user
+    if (route.match(/^\/admin\/auth-migration\/link-user\/[^/]+$/) && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — Super-Admin only' }, 403)
+      const targetId = route.split('/').pop()
+      const { send_invite = false } = await request.json().catch(() => ({}))
+      const result = await linkUserToSupabaseAuth(targetId, {
+        suppressErrors: false,
+        sendInvite: Boolean(send_invite),
+      }).catch(e => ({ ok: false, error: e.message }))
+      return json(result)
+    }
+
+    // POST /admin/auth-migration/send-invite/:userId — send password reset email to an already-linked user
+    if (route.match(/^\/admin\/auth-migration\/send-invite\/[^/]+$/) && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — Super-Admin only' }, 403)
+      const targetId = route.split('/').pop()
+      const result = await linkUserToSupabaseAuth(targetId, {
+        suppressErrors: false,
+        sendInvite: true,
+      }).catch(e => ({ ok: false, error: e.message }))
+      return json(result)
+    }
+
+    // POST /admin/auth-migration/migrate-all — batch migrate all users to Supabase Auth
+    // Body: { send_invites: boolean, dry_run: boolean }
+    //   send_invites=true → sends password reset emails after migrating each user
+    //   dry_run=true → returns what would be done without making any changes
+    if (route === '/admin/auth-migration/migrate-all' && method === 'POST') {
+      const user = await getUserFromRequest(request)
+      if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden — Super-Admin only' }, 403)
+      const { send_invites = false, dry_run = false } = await request.json().catch(() => ({}))
+      const result = await migrateAllUsersToSupabaseAuth({
+        sendInvites: Boolean(send_invites),
+        dryRun: Boolean(dry_run),
+      }).catch(e => ({ ok: false, error: e.message }))
+      return json(result)
+    }
+    // ─── End of Migration Routes ────────────────────────────────────────────────
 
     return json({ error: `Route ${route} not found` }, 404)
   } catch (e) {
