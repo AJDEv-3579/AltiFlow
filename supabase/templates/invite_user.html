@@ -16,145 +16,178 @@
     .wrapper {
       width: 100%;
       background-color: #09090b;
-      padding: 40px 16px;
+      background-image: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #09090b 70%);
+      padding: 48px 16px;
+      box-sizing: border-box;
     }
     .container {
       max-width: 580px;
       margin: 0 auto;
-      background-color: #18181b;
+      background-color: #141417;
       border: 1px solid #27272a;
-      border-radius: 14px;
+      border-radius: 20px;
       overflow: hidden;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 30px rgba(99, 102, 241, 0.15);
     }
     .header {
-      background: linear-gradient(135deg, #18181b 0%, #09090b 100%);
-      padding: 32px 40px 24px 40px;
-      border-bottom: 1px solid #27272a;
-      text-align: left;
+      background: linear-gradient(180deg, rgba(30, 27, 75, 0.5) 0%, rgba(20, 20, 23, 0) 100%);
+      padding: 40px 40px 24px 40px;
+      text-align: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
     .logo-img {
-      height: 68px;
-      max-width: 240px;
+      height: 72px;
+      max-width: 260px;
       width: auto;
+      margin: 0 auto;
       display: block;
       border: 0;
-      outline: none;
-      border-radius: 14px;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
       object-fit: cover;
     }
+    .tagline {
+      font-size: 13px;
+      font-weight: 500;
+      color: #a1a1aa;
+      margin-top: 14px;
+      letter-spacing: 0.2px;
+    }
     .body {
-      padding: 40px;
+      padding: 36px 40px 40px 40px;
+    }
+    .welcome-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #818cf8;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 16px;
     }
     .h1 {
-      font-size: 22px;
-      font-weight: 600;
+      font-size: 24px;
+      font-weight: 800;
       color: #ffffff;
-      margin: 0 0 16px 0;
-      letter-spacing: -0.3px;
+      margin: 0 0 14px 0;
+      letter-spacing: -0.4px;
+      line-height: 1.3;
     }
     .p {
-      font-size: 15px;
-      line-height: 1.6;
+      font-size: 14px;
+      line-height: 1.65;
       color: #a1a1aa;
       margin: 0 0 20px 0;
     }
     .credentials-card {
       background-color: #09090b;
       border: 1px solid #27272a;
-      border-radius: 10px;
-      padding: 20px 24px;
-      margin: 24px 0;
+      border-radius: 14px;
+      padding: 24px;
+      margin: 28px 0;
     }
     .credentials-title {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #a855f7;
-      margin-bottom: 14px;
+      letter-spacing: 0.08em;
+      color: #818cf8;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
     }
     .credential-row {
-      margin-bottom: 10px;
+      margin-bottom: 12px;
       font-size: 14px;
-      line-height: 1.5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
     .credential-row:last-child {
       margin-bottom: 0;
     }
     .credential-label {
       color: #71717a;
-      width: 150px;
-      display: inline-block;
       font-weight: 500;
+      font-size: 13px;
     }
     .credential-value {
       color: #f4f4f5;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-weight: 600;
+      font-size: 13px;
       background-color: #18181b;
-      padding: 2px 8px;
-      border-radius: 4px;
+      padding: 4px 10px;
+      border-radius: 6px;
       border: 1px solid #27272a;
     }
-    .warning-box {
-      background-color: rgba(234, 179, 8, 0.08);
-      border-left: 3px solid #eab308;
-      padding: 14px 16px;
-      border-radius: 4px;
-      font-size: 13px;
-      color: #fef08a;
-      margin-bottom: 24px;
-      line-height: 1.5;
-    }
     .info-notice {
-      background-color: rgba(99, 102, 241, 0.08);
-      border-left: 3px solid #6366f1;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 3px solid #3b82f6;
       padding: 14px 16px;
-      border-radius: 4px;
+      border-radius: 6px;
       font-size: 13px;
-      color: #c7d2fe;
-      margin-bottom: 24px;
-      line-height: 1.5;
+      color: #93c5fd;
+      margin-bottom: 20px;
+      line-height: 1.55;
+    }
+    .warning-box {
+      background: rgba(245, 158, 11, 0.08);
+      border-left: 3px solid #f59e0b;
+      padding: 14px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #fde68a;
+      margin-bottom: 28px;
+      line-height: 1.55;
     }
     .button-wrapper {
-      margin: 32px 0;
-      text-align: left;
+      margin: 32px 0 24px 0;
+      text-align: center;
     }
     .button {
       display: inline-block;
-      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      background: linear-gradient(135deg, #6366f1 0%, #3b82f6 100%);
       color: #ffffff !important;
-      font-weight: 600;
+      font-weight: 700;
       font-size: 15px;
-      padding: 14px 28px;
-      border-radius: 8px;
+      padding: 15px 36px;
+      border-radius: 12px;
       text-decoration: none;
-      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+      box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35);
+      transition: all 0.2s ease;
     }
     .url-box {
       background-color: #09090b;
       border: 1px solid #27272a;
-      border-radius: 8px;
+      border-radius: 10px;
       padding: 14px;
-      margin-top: 20px;
+      margin-top: 16px;
       font-size: 12px;
       color: #71717a;
+      font-family: ui-monospace, SFMono-Regular, monospace;
       word-break: break-all;
     }
     .footer {
-      padding: 24px 40px;
+      padding: 28px 40px;
       background-color: #09090b;
       border-top: 1px solid #27272a;
       font-size: 12px;
       color: #71717a;
       text-align: center;
-      line-height: 1.5;
+      line-height: 1.6;
+    }
+    .footer-brand {
+      font-weight: 700;
+      color: #e4e4e7;
     }
     .footer a {
-      color: #a1a1aa;
-      text-decoration: underline;
+      color: #818cf8;
+      text-decoration: none;
     }
   </style>
 </head>
@@ -163,48 +196,54 @@
     <div class="container">
       <div class="header">
         <img src="https://altiflow.thehornbillenvironment.com/logo/Alti-FLow-Full-Logo.jpeg" alt="AltiFlow Logo" class="logo-img" />
+        <div class="tagline">UAV Project Management &amp; Operations, Simplified</div>
       </div>
       <div class="body">
+        <div class="welcome-badge">&bull; Account Invitation</div>
         <h1 class="h1">Welcome to AltiFlow</h1>
         <p class="p">Hello,</p>
-        <p class="p">An account has been created for you on the <strong>AltiFlow</strong> Aerial Operations & Geospatial Platform. Here are your onboarding sign-in details:</p>
+        <p class="p">An account has been provisioned for you on the <strong>AltiFlow</strong> Aerial Operations platform. Below are your onboarding credentials:</p>
         
         <div class="credentials-card">
-          <div class="credentials-title">&bull; Account Credentials</div>
-          <div class="credential-row">
-            <span class="credential-label">Username:</span>
-            <span class="credential-value">{{ .Data.altiflow_username }}</span>
-          </div>
-          <div class="credential-row">
-            <span class="credential-label">Email Address:</span>
-            <span class="credential-value">{{ .Email }}</span>
-          </div>
-          <div class="credential-row">
-            <span class="credential-label">Temporary Password:</span>
-            <span class="credential-value">WelcometoAlti@123</span>
-          </div>
+          <div class="credentials-title">Onboarding Account Details</div>
+          <table width="100%" datetime="0" border="0" cellspacing="0" cellpadding="0">
+            <tr>
+              <td class="credential-label" style="padding: 6px 0;">Username:</td>
+              <td align="right" style="padding: 6px 0;"><span class="credential-value">{{ .Data.altiflow_username }}</span></td>
+            </tr>
+            <tr>
+              <td class="credential-label" style="padding: 6px 0;">Email Address:</td>
+              <td align="right" style="padding: 6px 0;"><span class="credential-value">{{ .Email }}</span></td>
+            </tr>
+            <tr>
+              <td class="credential-label" style="padding: 6px 0;">Temporary Password:</td>
+              <td align="right" style="padding: 6px 0;"><span class="credential-value">WelcometoAlti@123</span></td>
+            </tr>
+          </table>
         </div>
 
         <div class="info-notice">
-          <strong>Flexible Sign-In:</strong> You can sign in using <strong>either your Username or your Email Address</strong> along with your temporary password.
+          <strong>Flexible Sign-In:</strong> You can sign in using <strong>either your Username or your Email Address</strong> along with your password.
         </div>
 
         <div class="warning-box">
-          <strong>Important Security Requirement:</strong> Your temporary password is for your initial sign-in only. You will be prompted to change your password immediately upon your first login.
+          <strong>Security Action Required:</strong> Your temporary password is for initial sign-in only. You will be prompted to set a permanent password immediately upon your first login.
         </div>
 
-        <p class="p">Click the button below to confirm your email address and accept your invitation to get started:</p>
+        <p class="p">Click the button below to confirm your account and get started:</p>
         <div class="button-wrapper">
-          <a href="{{ .ConfirmationURL }}" class="button" target="_blank">Accept Invitation & Get Started &rarr;</a>
+          <a href="{{ .ConfirmationURL }}" class="button" target="_blank">Accept Invitation &amp; Get Started &rarr;</a>
         </div>
-        <p class="p" style="font-size: 13px; color: #71717a;">If the button above does not open directly, copy and paste this confirmation URL into your web browser:</p>
+        
+        <p class="p" style="font-size: 12px; color: #71717a; margin-top: 24px;">If the button above does not open, copy and paste this link into your browser:</p>
         <div class="url-box">
           {{ .ConfirmationURL }}
         </div>
       </div>
       <div class="footer">
-        <p style="margin: 0 0 8px 0;">&copy; AltiFlow - Aerial Operations & Geospatial Platform</p>
-        <p style="margin: 0;"><a href="https://altiflow.thehornbillenvironment.com">https://altiflow.thehornbillenvironment.com</a></p>
+        <p style="margin: 0 0 6px 0;" class="footer-brand">AltiFlow</p>
+        <p style="margin: 0 0 10px 0;">UAV Project Management &amp; Operations, Simplified</p>
+        <p style="margin: 0;"><a href="https://altiflow.thehornbillenvironment.com" target="_blank">https://altiflow.thehornbillenvironment.com</a></p>
       </div>
     </div>
   </div>
