@@ -14,6 +14,7 @@ import {
   Sparkles, Trash2, Upload, User, Users, X, Camera, FileCheck, Zap, ChevronLeft,
   CheckCircle2, Lock, Hash, Calendar, Box, Server, BarChart3, Bell, Sunrise, Sunset, Moon as MoonIcon, Sun as SunIcon,
   FolderOpen, Download, Folder, FileText, Eye, EyeOff, Star, Edit3,
+  UserPlus, Mail, Phone, AlertCircle, Check,
 } from 'lucide-react'
 
 // ============== API HELPER ==============
@@ -257,15 +258,51 @@ function Login({ onLogin }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [forgotMode, setForgotMode] = useState(false)
+  const [forgotTab, setForgotTab] = useState('email') // 'email' | 'passkey'
   const [showPwd, setShowPwd] = useState(false)
   const [passkeyFile, setPasskeyFile] = useState(null)
   const [passkeyFileContent, setPasskeyFileContent] = useState('')
   const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [setup, setSetup] = useState(null)
+  const [emailSent, setEmailSent] = useState(false)
+  const [recoveryUser, setRecoveryUser] = useState(null)
 
   useEffect(() => {
     fetch('/api/health').then(r => r.json()).then(setSetup).catch(() => {})
+
+    // Check if user landed on site from Supabase password reset email link (hash or query)
+    if (typeof window !== 'undefined') {
+      try {
+        const hash = window.location.hash ? window.location.hash.replace(/^#/, '') : ''
+        const search = window.location.search ? window.location.search.replace(/^\?/, '') : ''
+        const params = new URLSearchParams(hash || search)
+        const type = params.get('type')
+        const accessToken = params.get('access_token') || params.get('token') || params.get('code')
+        const errorCode = params.get('error_code') || params.get('error')
+
+        if (errorCode) {
+          toast.error(params.get('error_description') || 'Password reset link expired or invalid.')
+          return
+        }
+
+        if (accessToken || type === 'recovery' || type === 'invite') {
+          let userId = 'recovery_user'
+          let email = ''
+          if (accessToken && accessToken.includes('.')) {
+            try {
+              const payload = JSON.parse(atob(accessToken.split('.')[1]))
+              if (payload?.sub) userId = payload.sub
+              if (payload?.email) email = payload.email
+            } catch {}
+          }
+          setRecoveryUser({ id: userId, email: email, token: accessToken })
+        }
+      } catch (e) {
+        console.warn('Recovery token parse error:', e)
+      }
+    }
   }, [])
 
   async function submit(e) {
@@ -279,8 +316,37 @@ function Login({ onLogin }) {
     } catch (e) { toast.error(e.message) } finally { setBusy(false) }
   }
 
-  async function submitForgot(e) {
+  async function submitForgotEmail(e) {
     e.preventDefault()
+    if (!username.trim()) {
+      toast.error('Username or email address is required')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await api('/auth/request-reset-email', {
+        method: 'POST',
+        body: JSON.stringify({ identifier: username }),
+      })
+      toast.success(res.message || 'Password reset link sent!')
+      setEmailSent(true)
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitForgotPasskey(e) {
+    e.preventDefault()
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match')
+      return
+    }
+    if (newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters')
+      return
+    }
     setBusy(true)
     try {
       await api('/auth/forgot-password', {
@@ -293,6 +359,7 @@ function Login({ onLogin }) {
       setPasskeyFile(null)
       setPasskeyFileContent('')
       setNewPassword('')
+      setConfirmPassword('')
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -300,11 +367,44 @@ function Login({ onLogin }) {
     }
   }
 
-  function quick(u, p) { setUsername(u); setPassword(p) }
+  async function submitCompleteReset(e) {
+    e.preventDefault()
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match')
+      return
+    }
+    if (newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters')
+      return
+    }
+    setBusy(true)
+    try {
+      await api('/auth/complete-password-reset', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: recoveryUser.id, new_password: newPassword }),
+      })
+      toast.success('Password updated successfully! Sign in with your new password.')
+      setRecoveryUser(null)
+      setNewPassword('')
+      setConfirmPassword('')
+      if (typeof window !== 'undefined') {
+        window.history.replaceState(null, '', window.location.pathname)
+      }
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const showSetup = setup && setup.tables_ready === false
   const projectRef = setup?.supabase_url ? setup.supabase_url.match(/https?:\/\/([^.]+)/)?.[1] : null
   const sqlEditorUrl = projectRef ? `https://supabase.com/dashboard/project/${projectRef}/sql/new` : 'https://supabase.com/dashboard'
+
+  const passkeyPasswordsMatch = Boolean(newPassword && confirmPassword && newPassword === confirmPassword)
+  const passkeyPasswordsMismatch = Boolean(newPassword && confirmPassword && newPassword !== confirmPassword)
+  const recoveryPasswordsMatch = Boolean(newPassword && confirmPassword && newPassword === confirmPassword)
+  const recoveryPasswordsMismatch = Boolean(newPassword && confirmPassword && newPassword !== confirmPassword)
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative">
@@ -341,72 +441,152 @@ function Login({ onLogin }) {
         )}
 
         <GlassCard className="p-8">
-          <form onSubmit={forgotMode ? submitForgot : submit} className="space-y-4">
-            <Field label="User ID">
-              <TextInput value={username} onChange={setUsername} placeholder="username" />
-            </Field>
-            {!forgotMode ? (
-              <>
-                <Field label="Password">
-                  <div className="relative">
-                    <TextInput value={password} onChange={setPassword} type={showPwd ? 'text' : 'password'} placeholder="••••••••" className="pr-10" />
-                    <button type="button" onClick={() => setShowPwd(v => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors">
-                      {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </Field>
-                <Btn type="submit" disabled={busy || !username || !password} className="w-full mt-2">
-                  {busy ? 'Authenticating…' : 'Sign in'}
-                  <ArrowRight size={16} />
-                </Btn>
-              </>
-            ) : (
-              <>
-                <Field label="Passkey File" hint="Upload the encrypted passkey file you saved earlier.">
-                  <input
-                    type="file"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0] || null
-                      setPasskeyFile(file)
-                      if (!file) {
-                        setPasskeyFileContent('')
-                        return
-                      }
-                      try {
-                        const text = await readUploadedFile(file)
-                        setPasskeyFileContent(text)
-                      } catch {
-                        setPasskeyFileContent('')
-                        toast.error('Unable to read passkey file')
-                      }
-                    }}
-                    className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-300 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-800 file:px-3 file:py-1.5 file:text-xs file:text-zinc-200"
-                  />
-                  {passkeyFile && <div className="text-[11px] text-zinc-500 mt-1">Selected: {passkeyFile.name}</div>}
-                </Field>
+          {recoveryUser ? (
+            <div>
+              <div className="text-center mb-6">
+                <div className="w-12 h-12 rounded-2xl bg-violet-500/15 border border-violet-500/30 flex items-center justify-center mx-auto mb-3">
+                  <Lock className="text-violet-400" size={22} />
+                </div>
+                <h2 className="text-xl font-bold text-white mb-1">Set New Password</h2>
+                <p className="text-xs text-zinc-400">Password recovery authenticated for your account</p>
+              </div>
+              <form onSubmit={submitCompleteReset} className="space-y-4">
                 <Field label="New Password" hint="At least 6 characters.">
                   <TextInput value={newPassword} onChange={setNewPassword} type="password" placeholder="••••••••" />
                 </Field>
-                <Btn type="submit" disabled={busy || !username || !passkeyFileContent || newPassword.length < 6} className="w-full mt-2">
-                  {busy ? 'Resetting…' : 'Reset Password'}
+                <Field label="Confirm Password">
+                  <TextInput value={confirmPassword} onChange={setConfirmPassword} type="password" placeholder="••••••••" />
+                </Field>
+                {recoveryPasswordsMismatch && (
+                  <div className="text-xs text-red-400 font-medium">✕ Passwords do not match</div>
+                )}
+                {recoveryPasswordsMatch && (
+                  <div className="text-xs text-emerald-400 font-medium">✓ Passwords match</div>
+                )}
+                <Btn type="submit" disabled={busy || newPassword.length < 6 || newPassword !== confirmPassword} className="w-full mt-2">
+                  {busy ? 'Saving Password…' : 'Save New Password & Sign In'}
                   <ArrowRight size={16} />
                 </Btn>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                setForgotMode(v => !v)
-                setPasskeyFile(null)
-                setPasskeyFileContent('')
-                setNewPassword('')
-              }}
-              className="w-full text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
-            >
-              {forgotMode ? 'Back to sign in' : 'Forgot password? Reset with passkey file'}
-            </button>
-          </form>
+              </form>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {forgotMode && (
+                <div className="grid grid-cols-2 gap-1 p-1 bg-zinc-900/80 rounded-lg border border-zinc-800 text-xs font-medium mb-4">
+                  <button
+                    type="button"
+                    onClick={() => { setForgotTab('email'); setEmailSent(false) }}
+                    className={`py-1.5 rounded-md transition-colors flex items-center justify-center gap-1.5 ${forgotTab === 'email' ? 'bg-zinc-800 text-white shadow-sm font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    <Mail size={13} /> Send Email Link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForgotTab('passkey')}
+                    className={`py-1.5 rounded-md transition-colors flex items-center justify-center gap-1.5 ${forgotTab === 'passkey' ? 'bg-zinc-800 text-white shadow-sm font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    <Lock size={13} /> Passkey File
+                  </button>
+                </div>
+              )}
+
+              {!forgotMode ? (
+                <form onSubmit={submit} className="space-y-4">
+                  <Field label="Username or Email Address">
+                    <TextInput value={username} onChange={setUsername} placeholder="username or email" />
+                  </Field>
+                  <Field label="Password">
+                    <div className="relative">
+                      <TextInput value={password} onChange={setPassword} type={showPwd ? 'text' : 'password'} placeholder="••••••••" className="pr-10" />
+                      <button type="button" onClick={() => setShowPwd(v => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors">
+                        {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </Field>
+                  <Btn type="submit" disabled={busy || !username || !password} className="w-full mt-2">
+                    {busy ? 'Authenticating…' : 'Sign in'}
+                    <ArrowRight size={16} />
+                  </Btn>
+                </form>
+              ) : forgotTab === 'email' ? (
+                <form onSubmit={submitForgotEmail} className="space-y-4">
+                  <Field label="Username or Email Address" hint="Enter your username or email address to receive a password reset link.">
+                    <TextInput value={username} onChange={setUsername} placeholder="username or email" />
+                  </Field>
+                  {emailSent ? (
+                    <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs text-emerald-300">
+                      ✓ Password reset link has been dispatched to your email. Check your inbox to reset your password.
+                    </div>
+                  ) : (
+                    <Btn type="submit" disabled={busy || !username.trim()} className="w-full mt-2">
+                      {busy ? 'Sending Link…' : 'Send Reset Email'}
+                      <ArrowRight size={16} />
+                    </Btn>
+                  )}
+                </form>
+              ) : (
+                <form onSubmit={submitForgotPasskey} className="space-y-4">
+                  <Field label="Username or Email Address">
+                    <TextInput value={username} onChange={setUsername} placeholder="username or email" />
+                  </Field>
+                  <Field label="Passkey File" hint="Upload the encrypted passkey file you saved earlier.">
+                    <input
+                      type="file"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0] || null
+                        setPasskeyFile(file)
+                        if (!file) {
+                          setPasskeyFileContent('')
+                          return
+                        }
+                        try {
+                          const text = await readUploadedFile(file)
+                          setPasskeyFileContent(text)
+                        } catch {
+                          setPasskeyFileContent('')
+                          toast.error('Unable to read passkey file')
+                        }
+                      }}
+                      className="w-full h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm text-zinc-300 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-800 file:px-3 file:py-1.5 file:text-xs file:text-zinc-200"
+                    />
+                    {passkeyFile && <div className="text-[11px] text-zinc-500 mt-1">Selected: {passkeyFile.name}</div>}
+                  </Field>
+                  <Field label="New Password" hint="At least 6 characters.">
+                    <TextInput value={newPassword} onChange={setNewPassword} type="password" placeholder="••••••••" />
+                  </Field>
+                  <Field label="Confirm Password">
+                    <TextInput value={confirmPassword} onChange={setConfirmPassword} type="password" placeholder="••••••••" />
+                  </Field>
+                  {passkeyPasswordsMismatch && (
+                    <div className="text-xs text-red-400 font-medium">✕ Passwords do not match</div>
+                  )}
+                  {passkeyPasswordsMatch && (
+                    <div className="text-xs text-emerald-400 font-medium">✓ Passwords match</div>
+                  )}
+                  <Btn type="submit" disabled={busy || !username || !passkeyFileContent || newPassword.length < 6 || newPassword !== confirmPassword} className="w-full mt-2">
+                    {busy ? 'Resetting…' : 'Reset Password'}
+                    <ArrowRight size={16} />
+                  </Btn>
+                </form>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotMode(v => !v)
+                  setPasskeyFile(null)
+                  setPasskeyFileContent('')
+                  setNewPassword('')
+                  setConfirmPassword('')
+                  setEmailSent(false)
+                }}
+                className="w-full text-xs text-zinc-400 hover:text-zinc-200 transition-colors pt-2"
+              >
+                {forgotMode ? 'Back to sign in' : 'Forgot password? Reset via Email or Passkey'}
+              </button>
+            </div>
+          )}
         </GlassCard>
       </motion.div>
     </div>
@@ -417,6 +597,7 @@ function Login({ onLogin }) {
 function ChangePassword({ user, onDone }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
+  const [confirmNext, setConfirmNext] = useState('')
   const [passkeyFile, setPasskeyFile] = useState(null)
   const [passkeyFileContent, setPasskeyFileContent] = useState('')
   const [generatedPasskey, setGeneratedPasskey] = useState(null)
@@ -424,6 +605,14 @@ function ChangePassword({ user, onDone }) {
 
   async function submit(e) {
     e.preventDefault()
+    if (next !== confirmNext) {
+      toast.error('New password and confirm password do not match')
+      return
+    }
+    if (next.length < 6) {
+      toast.error('Password must be at least 6 characters')
+      return
+    }
     setBusy(true)
     try {
       const payload = { current_password: current, new_password: next }
@@ -447,6 +636,9 @@ function ChangePassword({ user, onDone }) {
     } finally { setBusy(false) }
   }
 
+  const passwordsMatch = Boolean(next && confirmNext && next === confirmNext)
+  const passwordsMismatch = Boolean(next && confirmNext && next !== confirmNext)
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative">
       <Backdrop />
@@ -468,6 +660,15 @@ function ChangePassword({ user, onDone }) {
             <Field label="New password" hint="At least 6 characters.">
               <TextInput value={next} onChange={setNext} type="password" placeholder="••••••••" />
             </Field>
+            <Field label="Confirm new password">
+              <TextInput value={confirmNext} onChange={setConfirmNext} type="password" placeholder="••••••••" />
+            </Field>
+            {passwordsMismatch && (
+              <div className="text-xs text-red-400 font-medium">✕ Passwords do not match</div>
+            )}
+            {passwordsMatch && (
+              <div className="text-xs text-emerald-400 font-medium">✓ Passwords match</div>
+            )}
             {user.must_change_password && (
               <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
                 After successful update, your encrypted passkey file will auto-download.
@@ -498,7 +699,7 @@ function ChangePassword({ user, onDone }) {
                 {passkeyFile && <div className="text-[11px] text-zinc-500 mt-1">Selected: {passkeyFile.name}</div>}
               </Field>
             )}
-            <Btn type="submit" disabled={busy || (!user.must_change_password && !passkeyFileContent)} className="w-full">{busy ? 'Updating…' : 'Update password'}</Btn>
+            <Btn type="submit" disabled={busy || next.length < 6 || next !== confirmNext || (!user.must_change_password && !passkeyFileContent)} className="w-full">{busy ? 'Updating…' : 'Update password'}</Btn>
             {generatedPasskey?.file_content && (
               <button
                 type="button"
@@ -2082,17 +2283,369 @@ function ClientsTab({ clients, onRefresh, isSuperAdmin }) {
   )
 }
 
-function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
-  const [form, setForm] = useState({ username: '', role: 'Admin', client_id: '', password: '' })
+function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUsers = [] }) {
+  const [role, setRole] = useState('Admin')
+  const [username, setUsername] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [clientId, setClientId] = useState('')
   const [busy, setBusy] = useState(false)
-  async function create() {
+  const [errorMsg, setErrorMsg] = useState('')
+
+  // Real-time username validation state
+  const [usernameStatus, setUsernameStatus] = useState(null) // null | 'checking' | 'available' | 'taken' | 'invalid'
+
+  const isOwnerRole = ['Super-Admin', 'Admin'].includes(role)
+  const isClientRole = ['Client-Admin', 'Client-User'].includes(role)
+  const isEmailRequired = isClientRole
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setRole('Admin')
+      setUsername('')
+      setFirstName('')
+      setLastName('')
+      setEmail('')
+      setPhone('')
+      setClientId('')
+      setErrorMsg('')
+      setUsernameStatus(null)
+    }
+  }, [isOpen])
+
+  // Real-time duplicate username check
+  useEffect(() => {
+    const trimmed = username.trim()
+    if (!trimmed) {
+      setUsernameStatus(null)
+      return
+    }
+    if (trimmed.length < 3 || !/^[a-zA-Z0-9_.-]+$/.test(trimmed)) {
+      setUsernameStatus('invalid')
+      return
+    }
+
+    // Check locally first against loaded user list
+    const isLocalDuplicate = existingUsers.some(
+      u => u.username && u.username.toLowerCase() === trimmed.toLowerCase()
+    )
+    if (isLocalDuplicate) {
+      setUsernameStatus('taken')
+      return
+    }
+
+    setUsernameStatus('checking')
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api(`/users/check-username?username=${encodeURIComponent(trimmed)}`)
+        if (res.available) {
+          setUsernameStatus('available')
+        } else {
+          setUsernameStatus('taken')
+        }
+      } catch {
+        setUsernameStatus('available')
+      }
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [username, existingUsers])
+
+  if (!isOpen) return null
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setErrorMsg('')
+
+    const trimmedUser = username.trim()
+    const trimmedFirst = firstName.trim()
+    const trimmedLast = lastName.trim()
+    const trimmedEmail = email.trim()
+
+    if (!trimmedFirst) {
+      setErrorMsg('First Name is required.')
+      return
+    }
+    if (!trimmedLast) {
+      setErrorMsg('Last Name is required.')
+      return
+    }
+    if (!trimmedUser || usernameStatus === 'invalid') {
+      setErrorMsg('Please enter a valid username (min 3 characters, alphanumeric/underscores/dots).')
+      return
+    }
+    if (usernameStatus === 'taken') {
+      setErrorMsg(`Username '${trimmedUser}' is already taken. Please choose another username.`)
+      return
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (isEmailRequired) {
+      if (!trimmedEmail) {
+        setErrorMsg('Email Address is required for Client roles (Client-Admin, Client-User).')
+        return
+      }
+      if (!emailRegex.test(trimmedEmail)) {
+        setErrorMsg('Please enter a valid email address.')
+        return
+      }
+    } else if (trimmedEmail && !emailRegex.test(trimmedEmail)) {
+      setErrorMsg('Please enter a valid email address.')
+      return
+    }
+
+    if (isClientRole && !clientId) {
+      setErrorMsg('Please select a Client Organization for this user.')
+      return
+    }
+
     setBusy(true)
     try {
-      const r = await api('/users', { method: 'POST', body: JSON.stringify(form) })
-      toast.success(`Created ${r.user.username}. Default password: ${r.default_password}`, { duration: 6000 })
-      setForm({ username: '', role: 'Admin', client_id: '', password: '' }); onRefresh()
-    } catch (e) { toast.error(e.message) } finally { setBusy(false) }
+      const payload = {
+        username: trimmedUser,
+        first_name: trimmedFirst,
+        last_name: trimmedLast,
+        email: trimmedEmail || null,
+        phone: phone.trim() || null,
+        role,
+        client_id: isClientRole ? clientId : null,
+      }
+      const r = await api('/users', { method: 'POST', body: JSON.stringify(payload) })
+      toast.success(`User '${r.user.username}' created successfully! Default password: ${r.default_password}`, { duration: 7000 })
+      onClose()
+      onRefresh?.()
+    } catch (err) {
+      setErrorMsg(err.message || 'Failed to create user')
+    } finally {
+      setBusy(false)
+    }
   }
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
+      >
+        {/* Modal Header */}
+        <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between shrink-0 bg-zinc-900/40">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400">
+              <UserPlus size={20} />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+                Create New User
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
+                  isOwnerRole
+                    ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                    : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                }`}>
+                  {isOwnerRole ? 'Owner Category' : 'Client Category'}
+                </span>
+              </h2>
+              <p className="text-xs text-zinc-400">
+                {isOwnerRole
+                  ? 'Owner Account (Username login · Email optional)'
+                  : 'Client Account (Email mandatory for Supabase Auth & Invitations)'}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          {errorMsg && (
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
+              <AlertCircle size={16} className="shrink-0 text-red-400" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {/* Role Selection */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+              Select Role <span className="text-red-400">*</span>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {['Super-Admin', 'Admin', 'Client-Admin', 'Client-User'].map(r => {
+                const isSelected = role === r
+                const isOwner = ['Super-Admin', 'Admin'].includes(r)
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setRole(r)}
+                    className={`p-2.5 rounded-xl border text-xs text-left transition-all flex flex-col justify-between ${
+                      isSelected
+                        ? 'bg-violet-500/15 border-violet-500/50 text-violet-200 font-semibold ring-1 ring-violet-500/50'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-300'
+                    }`}
+                  >
+                    <span className="font-semibold">{r}</span>
+                    <span className="text-[9px] text-zinc-500 mt-1">
+                      {isOwner ? 'Owner' : 'Client'}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Client Organization Picker */}
+          {isClientRole && (
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
+                Client Organization <span className="text-red-400">*</span>
+              </label>
+              <select
+                value={clientId}
+                onChange={e => setClientId(e.target.value)}
+                className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 focus:outline-none focus:border-violet-500/50"
+              >
+                <option value="">Select client organization…</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* First & Last Name */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
+                First Name <span className="text-red-400">*</span>
+              </label>
+              <input
+                type="text"
+                value={firstName}
+                onChange={e => setFirstName(e.target.value)}
+                placeholder="e.g. John"
+                className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500/50"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
+                Last Name <span className="text-red-400">*</span>
+              </label>
+              <input
+                type="text"
+                value={lastName}
+                onChange={e => setLastName(e.target.value)}
+                placeholder="e.g. Doe"
+                className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500/50"
+              />
+            </div>
+          </div>
+
+          {/* Username with Real-time Duplicate Validation */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Username <span className="text-red-400">*</span>
+              </label>
+              {usernameStatus === 'checking' && (
+                <span className="text-[10px] text-amber-400 animate-pulse">Checking availability…</span>
+              )}
+              {usernameStatus === 'available' && (
+                <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                  ✓ Available
+                </span>
+              )}
+              {usernameStatus === 'taken' && (
+                <span className="text-[10px] text-red-400 font-semibold flex items-center gap-1">
+                  ✕ Username already taken
+                </span>
+              )}
+              {usernameStatus === 'invalid' && (
+                <span className="text-[10px] text-red-400">Min 3 chars (letters, numbers, _, -)</span>
+              )}
+            </div>
+            <input
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value.toLowerCase().trim())}
+              placeholder="e.g. jdoe_admin"
+              className={`w-full h-10 bg-zinc-900/60 border rounded-xl px-3 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none ${
+                usernameStatus === 'taken' || usernameStatus === 'invalid'
+                  ? 'border-red-500/60 focus:border-red-500'
+                  : usernameStatus === 'available'
+                  ? 'border-emerald-500/60 focus:border-emerald-500'
+                  : 'border-zinc-800 focus:border-violet-500/50'
+              }`}
+            />
+          </div>
+
+          {/* Email Address */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Email Address {isEmailRequired ? <span className="text-red-400">*</span> : <span className="text-zinc-500 font-normal lowercase">(optional)</span>}
+              </label>
+              <span className="text-[10px] text-zinc-500">
+                {isEmailRequired ? 'Mandatory for Client users' : 'Optional for Owner users'}
+              </span>
+            </div>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder={isEmailRequired ? "user@clientcompany.com" : "owner@company.com (optional)"}
+              className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500/50"
+            />
+          </div>
+
+          {/* Phone Number (Optional) */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
+              Phone Number <span className="text-zinc-500 font-normal lowercase">(optional)</span>
+            </label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              placeholder="+1 (555) 000-0000"
+              className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500/50"
+            />
+          </div>
+
+          <div className="pt-1 text-[11px] text-zinc-400 bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/60 leading-relaxed">
+            🔑 <strong className="text-zinc-200">Default Password:</strong> <code className="text-violet-300 bg-zinc-800 px-1.5 py-0.5 rounded font-mono text-[10px]">WelcometoAlti@123</code>. User will be prompted to reset password on first login.
+          </div>
+        </form>
+
+        {/* Modal Footer */}
+        <div className="px-6 py-4 border-t border-zinc-800 shrink-0 flex items-center justify-end gap-2 bg-zinc-900/40">
+          <Btn variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Btn>
+          <Btn
+            size="sm"
+            onClick={handleSubmit}
+            disabled={busy || usernameStatus === 'taken' || usernameStatus === 'invalid' || usernameStatus === 'checking'}
+            icon={UserPlus}
+          >
+            {busy ? 'Creating User…' : 'Create User'}
+          </Btn>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
+  const [showCreateModal, setShowCreateModal] = useState(false)
+
   async function del(id, username) {
     if (!confirm(`Delete user ${username}? It can be restored from Bin.`)) return
     try { await api(`/users/${id}`, { method: 'DELETE' }); toast.success('Moved to Bin'); onRefresh() } catch (e) { toast.error(e.message) }
@@ -2121,60 +2674,125 @@ function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
       toast.success(`Passkey file regenerated for ${r.username}. Share the downloaded file securely.`, { duration: 9000 })
     } catch (e) { toast.error(e.message) }
   }
+
   return (
     <div className="space-y-4">
-      {isSuperAdmin && (
-        <GlassCard className="p-5">
-          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Add user</div>
-          <div className="grid md:grid-cols-4 gap-2">
-            <TextInput value={form.username} onChange={v => setForm({ ...form, username: v })} placeholder="username" />
-            <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm">
-              <option>Super-Admin</option><option>Admin</option><option>Client-Admin</option><option>Client-User</option>
-            </select>
-            {['Client-Admin', 'Client-User'].includes(form.role) ? (
-              <select value={form.client_id} onChange={e => setForm({ ...form, client_id: e.target.value })} className="h-11 bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 text-sm">
-                <option value="">Pick client…</option>
-                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            ) : <div />}
-            <Btn onClick={create} disabled={busy || !form.username} icon={Plus}>Create</Btn>
+      {/* Users Header / Actions */}
+      <GlassCard className="p-5 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">User Directory</div>
+          <div className="text-base font-bold text-zinc-100 mt-0.5">
+            {users.length} Registered User{users.length !== 1 ? 's' : ''}
           </div>
-          <div className="text-[10px] text-zinc-600 mt-2">Default password: <span className="font-mono">WelcometoAlti@123</span> · forced reset on first login.</div>
-        </GlassCard>
-      )}
+        </div>
+        {isSuperAdmin && (
+          <Btn onClick={() => setShowCreateModal(true)} icon={UserPlus}>
+            Create User
+          </Btn>
+        )}
+      </GlassCard>
+
+      {/* Users List */}
       <GlassCard className="p-5">
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">All users</div>
+        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3 font-semibold">All Users</div>
         {users.length === 0 && (
           <div className="text-sm text-zinc-500 py-6 text-center">No users found. Try refreshing.</div>
         )}
         <div className="space-y-2">
-          {users.map(u => (
-            <div key={u.id} className="flex items-center justify-between p-3 rounded-lg border border-zinc-800/60 bg-zinc-900/40">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500/30 to-blue-500/30 flex items-center justify-center"><User size={16} /></div>
-                <div>
-                  <div className="font-medium flex items-center gap-2">{u.username}
-                    <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">{u.role}</span>
-                    {u.must_change_password && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">Reset pending</span>}
+          {users.map(u => {
+            const isOwnerCategory = ['Super-Admin', 'Admin'].includes(u.role)
+            const fullName = [u.first_name, u.last_name].filter(Boolean).join(' ')
+            const initials = fullName
+              ? (u.first_name[0] + u.last_name[0]).toUpperCase()
+              : u.username.slice(0, 2).toUpperCase()
+
+            return (
+              <div key={u.id} className="flex items-center justify-between p-3.5 rounded-xl border border-zinc-800/60 bg-zinc-900/40 hover:bg-zinc-900/70 transition-colors flex-wrap gap-3">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                    isOwnerCategory
+                      ? 'bg-purple-500/15 border border-purple-500/30 text-purple-300'
+                      : 'bg-blue-500/15 border border-blue-500/30 text-blue-300'
+                  }`}>
+                    {initials}
                   </div>
-                  {u.client_name && <div className="text-[11px] text-zinc-500">{u.client_name}</div>}
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm text-zinc-100 flex items-center gap-2 flex-wrap">
+                      <span>{fullName || u.username}</span>
+                      <span className="text-[11px] font-mono text-zinc-400">@{u.username}</span>
+
+                      {/* Category Badge */}
+                      <span className={`text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded font-semibold ${
+                        isOwnerCategory
+                          ? 'bg-purple-500/10 text-purple-300 border border-purple-500/20'
+                          : 'bg-blue-500/10 text-blue-300 border border-blue-500/20'
+                      }`}>
+                        {isOwnerCategory ? 'Owner' : 'Client'}
+                      </span>
+
+                      {/* Role Badge */}
+                      <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700/50 font-medium">
+                        {u.role}
+                      </span>
+
+                      {u.must_change_password && (
+                        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 font-semibold">
+                          Reset Pending
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Metadata details line: email, phone, client_name */}
+                    <div className="flex items-center gap-3 text-xs text-zinc-400 mt-1 flex-wrap">
+                      {u.email && (
+                        <span className="flex items-center gap-1 text-zinc-300">
+                          <Mail size={12} className="text-zinc-500" />
+                          <span>{u.email}</span>
+                        </span>
+                      )}
+                      {u.phone && (
+                        <span className="flex items-center gap-1 text-zinc-400">
+                          <Phone size={12} className="text-zinc-500" />
+                          <span>{u.phone}</span>
+                        </span>
+                      )}
+                      {u.client_name && (
+                        <span className="flex items-center gap-1 text-zinc-400">
+                          <Building2 size={12} className="text-zinc-500" />
+                          <span>{u.client_name}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {isSuperAdmin && u.username !== 'devbond01' && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Btn size="sm" variant="ghost" onClick={() => generatePasscode(u.id, u.username)}>
+                      Key File
+                    </Btn>
+                    <Btn size="sm" variant="ghost" onClick={() => resetPassword(u.id, u.username)}>
+                      Reset Pwd
+                    </Btn>
+                    <button onClick={() => del(u.id, u.username)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                )}
               </div>
-              {isSuperAdmin && u.username !== 'devbond01' && (
-                <div className="flex items-center gap-2">
-                  <Btn size="sm" variant="ghost" onClick={() => generatePasscode(u.id, u.username)}>
-                    Key File
-                  </Btn>
-                  <Btn size="sm" variant="ghost" onClick={() => resetPassword(u.id, u.username)}>
-                    Reset Pwd
-                  </Btn>
-                  <button onClick={() => del(u.id, u.username)} className="p-2 hover:bg-red-500/10 text-red-300 rounded-lg"><Trash2 size={14} /></button>
-                </div>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       </GlassCard>
+
+      {/* Create User Modal */}
+      <CreateUserModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        clients={clients}
+        onRefresh={onRefresh}
+        existingUsers={users}
+      />
     </div>
   )
 }
@@ -3519,7 +4137,7 @@ function ProjectTeamTab({ project, orgUsers, assignedUserIds, onCreateUser, onSa
 
   return (
     <div className="space-y-4">
-      <ClientAdminUserCreate onSubmit={createUser} />
+      <ClientAdminUserCreate onRefresh={onRefresh} />
 
       <GlassCard className="p-5">
         <div className="flex items-center justify-between gap-3 mb-4">
@@ -5526,23 +6144,26 @@ function ClientAdminApp({ user, onLogout, onEditProfile }) {
   )
 }
 
-function ClientAdminUserCreate({ onSubmit }) {
-  const [username, setUsername] = useState('')
-  const [busy, setBusy] = useState(false)
-  async function create() {
-    if (!username.trim()) return
-    setBusy(true)
-    try { await onSubmit({ username }) } finally { setBusy(false); setUsername('') }
-  }
+function ClientAdminUserCreate({ onRefresh, clients = [] }) {
+  const [showModal, setShowModal] = useState(false)
   return (
-    <GlassCard className="p-5">
-      <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Add team member</div>
-      <div className="flex gap-2">
-        <TextInput value={username} onChange={setUsername} placeholder="username" />
-        <Btn onClick={create} disabled={busy || !username} icon={Plus}>Create</Btn>
-      </div>
-      <div className="text-[10px] text-zinc-600 mt-2">Default password: <span className="font-mono">WelcometoAlti@123</span></div>
-    </GlassCard>
+    <>
+      <GlassCard className="p-5 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">Add Team Member</div>
+          <div className="text-xs text-zinc-400 mt-0.5">Create a new Client user account for your organization</div>
+        </div>
+        <Btn onClick={() => setShowModal(true)} icon={UserPlus}>
+          Add Team Member
+        </Btn>
+      </GlassCard>
+      <CreateUserModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        clients={clients}
+        onRefresh={onRefresh}
+      />
+    </>
   )
 }
 

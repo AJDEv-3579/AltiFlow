@@ -14,6 +14,9 @@ import {
   getMigrationStatus,
   linkUserToSupabaseAuth,
   migrateAllUsersToSupabaseAuth,
+  requestPasswordResetEmail,
+  completePasswordReset,
+  findUserByIdentifier,
   stripSensitiveFields as strip_,
   SUPER_ADMIN as SA,
   ADMIN as AD,
@@ -677,7 +680,7 @@ async function handleRoute(request, context) {
       }
       if (new_password.length < 6) return json({ error: 'New password must be 6+ chars' }, 400)
 
-      const { data: user } = await sb.from('users').select('*').ilike('username', username).maybeSingle()
+      const user = await findUserByIdentifier(username)
       if (!user) return json({ error: 'Invalid username or passkey file' }, 401)
 
       try {
@@ -687,8 +690,33 @@ async function handleRoute(request, context) {
       }
 
       await updateUserPassword(user.id, new_password, false)
-
       return json({ success: true })
+    }
+
+    if (route === '/auth/request-reset-email' && method === 'POST') {
+      const { identifier } = await request.json()
+      if (!identifier || !identifier.trim()) {
+        return json({ error: 'Username or email address is required' }, 400)
+      }
+      try {
+        const result = await requestPasswordResetEmail(identifier)
+        return json(result)
+      } catch (e) {
+        return json({ error: e.message }, 400)
+      }
+    }
+
+    if (route === '/auth/complete-password-reset' && method === 'POST') {
+      const { user_id, new_password } = await request.json()
+      if (!user_id || !new_password || new_password.length < 6) {
+        return json({ error: 'User ID and a new password (6+ chars) are required' }, 400)
+      }
+      try {
+        const result = await completePasswordReset({ userId: user_id, newPassword: new_password })
+        return json(result)
+      } catch (e) {
+        return json({ error: e.message }, 400)
+      }
     }
 
     // --- CLIENTS ---
@@ -719,12 +747,19 @@ async function handleRoute(request, context) {
     }
 
     // --- USERS ---
+    if (route === '/users/check-username' && method === 'GET') {
+      const url = new URL(request.url)
+      const usernameParam = (url.searchParams.get('username') || '').trim()
+      if (!usernameParam) return json({ available: false, error: 'Username query parameter is required' }, 400)
+      const { data: existing } = await sb.from('users').select('id, username').ilike('username', usernameParam).maybeSingle()
+      return json({ available: !existing, username: usernameParam, exists: Boolean(existing) })
+    }
+
     if (route === '/users' && method === 'GET') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
-      // Detect whether extended passkey columns exist (added in later migrations)
-      const extendedSelect = 'id, username, role, client_id, must_change_password, created_at, passcode_key_ext, passcode_key_created_at'
-      const baseSelect = 'id, username, role, client_id, must_change_password, created_at'
+      const extendedSelect = '*'
+      const baseSelect = 'id, username, role, client_id, must_change_password, created_at, email'
       async function fetchUsers(query) {
         let r = await query(extendedSelect)
         if (r.error) r = await query(baseSelect)
@@ -753,8 +788,9 @@ async function handleRoute(request, context) {
     if (route === '/users' && method === 'POST') {
       const user = await getUserFromRequest(request)
       if (!user) return json({ error: 'Unauthorized' }, 401)
-      const { username, role, client_id, password } = await request.json()
-      if (!username || !role) return json({ error: 'username & role required' }, 400)
+      const { username, role, client_id, password, email, first_name, last_name, phone } = await request.json()
+      if (!username || !role) return json({ error: 'Username & Role are required' }, 400)
+
       // Super-Admin can create any role; Client-Admin can only create Client-User in their org
       if (user.role === CLIENT_ADMIN) {
         if (role !== CLIENT_USER) return json({ error: 'Client-Admin can only create Client-User accounts' }, 403)
@@ -763,25 +799,49 @@ async function handleRoute(request, context) {
       }
       // Admin role cannot create users — only Super-Admin
       if (user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can create users' }, 403)
-      let emailVal = null
-      let usernameVal = username.trim()
 
-      if (usernameVal.includes('@')) {
-        emailVal = usernameVal
-        usernameVal = await generateUniqueUsername(emailVal)
-      }
+      const usernameVal = username.trim()
+      if (usernameVal.length < 3) return json({ error: 'Username must be at least 3 characters long' }, 400)
+      if (!/^[a-zA-Z0-9_.-]+$/.test(usernameVal)) return json({ error: 'Username can only contain letters, numbers, underscores, dots, and hyphens' }, 400)
 
       const { data: exists } = await sb.from('users').select('id').ilike('username', usernameVal).maybeSingle()
-      if (exists) return json({ error: 'Username already exists' }, 409)
-      const pwd = password || DEFAULT_TEAM_PWD
-      const assignedClientId = user.role === CLIENT_ADMIN ? user.client_id : (CLIENT_ROLES.includes(role) ? (client_id || null) : null)
+      if (exists) return json({ error: `Username '${usernameVal}' is already taken` }, 409)
 
-      // Delegate to auth adapter — handles both custom auth insert and optional Supabase Auth account creation
+      // Validate required First Name & Last Name
+      const firstNameVal = (first_name || '').trim()
+      const lastNameVal = (last_name || '').trim()
+      if (!firstNameVal) return json({ error: 'First Name is required' }, 400)
+      if (!lastNameVal) return json({ error: 'Last Name is required' }, 400)
+
+      // Role category dynamic validation rules:
+      // Client Roles (Client-Admin, Client-User): Email MANDATORY
+      // Owner Roles (Super-Admin, Admin): Email OPTIONAL
+      const isClientRole = CLIENT_ROLES.includes(role)
+      const emailVal = (email || '').trim()
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+      if (isClientRole) {
+        if (!emailVal) return json({ error: 'Email address is required for Client roles' }, 400)
+        if (!emailRegex.test(emailVal)) return json({ error: 'Please enter a valid email address' }, 400)
+      } else if (emailVal && !emailRegex.test(emailVal)) {
+        return json({ error: 'Please enter a valid email address' }, 400)
+      }
+
+      const assignedClientId = user.role === CLIENT_ADMIN ? user.client_id : (isClientRole ? (client_id || null) : null)
+      if (isClientRole && !assignedClientId) {
+        return json({ error: 'Client Organization selection is required for Client roles' }, 400)
+      }
+
+      const pwd = password || DEFAULT_TEAM_PWD
+
       try {
         const result = await authAdapterCreateUser({
           id: uuidv4(),
           username: usernameVal,
-          email: emailVal,
+          email: emailVal || null,
+          first_name: firstNameVal,
+          last_name: lastNameVal,
+          phone: (phone || '').trim() || null,
           password: pwd,
           role,
           client_id: assignedClientId,
