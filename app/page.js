@@ -272,14 +272,15 @@ function Login({ onLogin }) {
   useEffect(() => {
     fetch('/api/health').then(r => r.json()).then(setSetup).catch(() => {})
 
-    // Check if user landed on site from Supabase password reset email link (hash or query)
+    // Check if user landed on site from Supabase password reset email link (combines search & hash)
     if (typeof window !== 'undefined') {
       try {
-        const hash = window.location.hash ? window.location.hash.replace(/^#/, '') : ''
-        const search = window.location.search ? window.location.search.replace(/^\?/, '') : ''
-        const params = new URLSearchParams(hash || search)
+        const rawSearch = window.location.search ? window.location.search.replace(/^\?/, '') : ''
+        const rawHash = window.location.hash ? window.location.hash.replace(/^#/, '') : ''
+        const combined = [rawSearch, rawHash].filter(Boolean).join('&')
+        const params = new URLSearchParams(combined)
         const type = params.get('type')
-        const accessToken = params.get('access_token') || params.get('token') || params.get('code')
+        const accessToken = params.get('access_token') || params.get('token') || params.get('code') || params.get('token_hash')
         const errorCode = params.get('error_code') || params.get('error')
 
         if (errorCode) {
@@ -292,10 +293,23 @@ function Login({ onLogin }) {
           let email = ''
           if (accessToken && accessToken.includes('.')) {
             try {
-              const payload = JSON.parse(atob(accessToken.split('.')[1]))
-              if (payload?.sub) userId = payload.sub
-              if (payload?.email) email = payload.email
-            } catch {}
+              // Safe Base64URL decoding for JWT payload
+              const base64Url = accessToken.split('.')[1]
+              if (base64Url) {
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+                const jsonPayload = decodeURIComponent(
+                  atob(base64)
+                    .split('')
+                    .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                    .join('')
+                )
+                const payload = JSON.parse(jsonPayload)
+                if (payload?.sub) userId = payload.sub
+                if (payload?.email) email = payload.email
+              }
+            } catch (jwtErr) {
+              console.warn('JWT payload decode warning:', jwtErr)
+            }
           }
           setRecoveryUser({ id: userId, email: email, token: accessToken })
         }
@@ -381,7 +395,12 @@ function Login({ onLogin }) {
     try {
       await api('/auth/complete-password-reset', {
         method: 'POST',
-        body: JSON.stringify({ user_id: recoveryUser.id, new_password: newPassword }),
+        body: JSON.stringify({
+          user_id: recoveryUser?.id,
+          email: recoveryUser?.email,
+          identifier: recoveryUser?.email || recoveryUser?.id,
+          new_password: newPassword,
+        }),
       })
       toast.success('Password updated successfully! Sign in with your new password.')
       setRecoveryUser(null)
@@ -2283,8 +2302,11 @@ function ClientsTab({ clients, onRefresh, isSuperAdmin }) {
   )
 }
 
-function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUsers = [] }) {
-  const [role, setRole] = useState('Admin')
+function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUsers = [], user = null }) {
+  const isClientAdminCreator = user?.role === 'Client-Admin'
+  const allowedRoles = isClientAdminCreator ? ['Client-User', 'Client-Admin'] : ['Super-Admin', 'Admin', 'Client-Admin', 'Client-User']
+
+  const [role, setRole] = useState(isClientAdminCreator ? 'Client-User' : 'Admin')
   const [username, setUsername] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -2304,17 +2326,17 @@ function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUse
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen) {
-      setRole('Admin')
+      setRole(isClientAdminCreator ? 'Client-User' : 'Admin')
       setUsername('')
       setFirstName('')
       setLastName('')
       setEmail('')
       setPhone('')
-      setClientId('')
+      setClientId(isClientAdminCreator ? (user?.client_id || user?.client?.id || '') : '')
       setErrorMsg('')
       setUsernameStatus(null)
     }
-  }, [isOpen])
+  }, [isOpen, isClientAdminCreator, user])
 
   // Real-time duplicate username check
   useEffect(() => {
@@ -2397,7 +2419,8 @@ function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUse
       return
     }
 
-    if (isClientRole && !clientId) {
+    const effectiveClientId = isClientAdminCreator ? (user?.client_id || user?.client?.id || clientId) : clientId
+    if (isClientRole && !effectiveClientId) {
       setErrorMsg('Please select a Client Organization for this user.')
       return
     }
@@ -2410,8 +2433,8 @@ function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUse
         last_name: trimmedLast,
         email: trimmedEmail || null,
         phone: phone.trim() || null,
-        role,
-        client_id: isClientRole ? clientId : null,
+        role: isClientAdminCreator && !allowedRoles.includes(role) ? 'Client-User' : role,
+        client_id: isClientRole ? effectiveClientId : null,
       }
       const r = await api('/users', { method: 'POST', body: JSON.stringify(payload) })
       toast.success(`User '${r.user.username}' created successfully! Default password: ${r.default_password}`, { duration: 7000 })
@@ -2476,8 +2499,8 @@ function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUse
             <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
               Select Role <span className="text-red-400">*</span>
             </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {['Super-Admin', 'Admin', 'Client-Admin', 'Client-User'].map(r => {
+            <div className={`grid gap-2 ${isClientAdminCreator ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-4'}`}>
+              {allowedRoles.map(r => {
                 const isSelected = role === r
                 const isOwner = ['Super-Admin', 'Admin'].includes(r)
                 return (
@@ -2507,16 +2530,24 @@ function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUse
               <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
                 Client Organization <span className="text-red-400">*</span>
               </label>
-              <select
-                value={clientId}
-                onChange={e => setClientId(e.target.value)}
-                className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 focus:outline-none focus:border-violet-500/50"
-              >
-                <option value="">Select client organization…</option>
-                {clients.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+              {isClientAdminCreator ? (
+                <div className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 flex items-center text-xs text-zinc-200 font-medium">
+                  <Building2 size={14} className="text-zinc-500 mr-2 shrink-0" />
+                  <span className="truncate">{user?.client_name || user?.client?.name || clients.find(c => c.id === (user?.client_id || clientId))?.name || 'Your Client Organization'}</span>
+                  <span className="ml-auto text-[9px] text-zinc-500 uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 shrink-0">Locked to your org</span>
+                </div>
+              ) : (
+                <select
+                  value={clientId}
+                  onChange={e => setClientId(e.target.value)}
+                  className="w-full h-10 bg-zinc-900/60 border border-zinc-800 rounded-xl px-3 text-xs text-zinc-100 focus:outline-none focus:border-violet-500/50"
+                >
+                  <option value="">Select client organization…</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              )}
             </div>
           )}
 
@@ -2643,7 +2674,7 @@ function CreateUserModal({ isOpen, onClose, clients = [], onRefresh, existingUse
   )
 }
 
-function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
+function UsersTab({ users, clients, onRefresh, isSuperAdmin, user = null }) {
   const [showCreateModal, setShowCreateModal] = useState(false)
 
   async function del(id, username) {
@@ -2792,6 +2823,7 @@ function UsersTab({ users, clients, onRefresh, isSuperAdmin }) {
         clients={clients}
         onRefresh={onRefresh}
         existingUsers={users}
+        user={user}
       />
     </div>
   )
@@ -4107,7 +4139,7 @@ function JobCardDetailModal({
   )
 }
 
-function ProjectTeamTab({ project, orgUsers, assignedUserIds, onCreateUser, onSaveAssignments, onRefresh }) {
+function ProjectTeamTab({ project, orgUsers, assignedUserIds, onCreateUser, onSaveAssignments, onRefresh, user = null, clients = [] }) {
   const [selectedIds, setSelectedIds] = useState(assignedUserIds)
   const [saving, setSaving] = useState(false)
 
@@ -4137,7 +4169,7 @@ function ProjectTeamTab({ project, orgUsers, assignedUserIds, onCreateUser, onSa
 
   return (
     <div className="space-y-4">
-      <ClientAdminUserCreate onRefresh={onRefresh} />
+      <ClientAdminUserCreate onRefresh={onRefresh} user={user} clients={clients} />
 
       <GlassCard className="p-5">
         <div className="flex items-center justify-between gap-3 mb-4">
@@ -6069,6 +6101,8 @@ function ProjectDetailPage({
             onCreateUser={createTeamUser}
             onSaveAssignments={saveAssignments}
             onRefresh={onRefresh}
+            user={user}
+            clients={projects}
           />
         )}
       </div>
@@ -6145,7 +6179,7 @@ function ClientAdminApp({ user, onLogout, onEditProfile }) {
   )
 }
 
-function ClientAdminUserCreate({ onRefresh, clients = [] }) {
+function ClientAdminUserCreate({ onRefresh, clients = [], user = null }) {
   const [showModal, setShowModal] = useState(false)
   return (
     <>
@@ -6163,6 +6197,7 @@ function ClientAdminUserCreate({ onRefresh, clients = [] }) {
         onClose={() => setShowModal(false)}
         clients={clients}
         onRefresh={onRefresh}
+        user={user}
       />
     </>
   )

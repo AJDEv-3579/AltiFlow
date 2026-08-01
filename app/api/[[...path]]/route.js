@@ -13,6 +13,7 @@ import {
   createAppUser as authAdapterCreateUser,
   getMigrationStatus,
   linkUserToSupabaseAuth,
+  deleteUserFromSupabaseAuth,
   migrateAllUsersToSupabaseAuth,
   requestPasswordResetEmail,
   completePasswordReset,
@@ -515,6 +516,16 @@ async function moveToRecycleBin({ tableName, entityType, id, user, scope = null 
   if (scope?.field && scope?.value !== undefined) deleteQuery = deleteQuery.eq(scope.field, scope.value)
   const { error: deleteError } = await deleteQuery
   if (deleteError) throw new Error(deleteError.message)
+
+  // If user entity is deleted, also delete from Supabase Auth auth.users table
+  if (tableName === 'users' || entityType === 'user') {
+    try {
+      await deleteUserFromSupabaseAuth(row.supabase_auth_id, row.email)
+    } catch (authErr) {
+      console.warn('[Route] Could not remove deleted user from Supabase Auth:', authErr.message)
+    }
+  }
+
   return { ok: true, row }
 }
 
@@ -531,6 +542,15 @@ async function restoreFromRecycleBin(entry, user) {
     restored_by: user?.id || null,
     restored_by_username: user?.username || 'system',
   }).eq('id', entry.id)
+
+  // If user entity is restored and has an email, re-link to Supabase Auth auth.users
+  if ((tableName === 'users' || entry.entity_type === 'user') && payload.email) {
+    try {
+      await linkUserToSupabaseAuth(payload.id, { suppressErrors: true, sendInvite: false })
+    } catch (authErr) {
+      console.warn('[Route] Could not re-link restored user to Supabase Auth:', authErr.message)
+    }
+  }
 }
 
 async function resolveEntityScope(entityType, entityId) {
@@ -707,12 +727,12 @@ async function handleRoute(request, context) {
     }
 
     if (route === '/auth/complete-password-reset' && method === 'POST') {
-      const { user_id, new_password } = await request.json()
-      if (!user_id || !new_password || new_password.length < 6) {
-        return json({ error: 'User ID and a new password (6+ chars) are required' }, 400)
+      const { user_id, email, identifier, new_password } = await request.json().catch(() => ({}))
+      if (!new_password || new_password.length < 6) {
+        return json({ error: 'A new password (6+ chars) is required' }, 400)
       }
       try {
-        const result = await completePasswordReset({ userId: user_id, newPassword: new_password })
+        const result = await completePasswordReset({ userId: user_id, email, identifier, newPassword: new_password })
         return json(result)
       } catch (e) {
         return json({ error: e.message }, 400)
@@ -791,13 +811,13 @@ async function handleRoute(request, context) {
       const { username, role, client_id, password, email, first_name, last_name, phone } = await request.json()
       if (!username || !role) return json({ error: 'Username & Role are required' }, 400)
 
-      // Super-Admin can create any role; Client-Admin can only create Client-User in their org
+      // Super-Admin can create any role; Client-Admin can only create Client roles (Client-User, Client-Admin) in their own org
       if (user.role === CLIENT_ADMIN) {
-        if (role !== CLIENT_USER) return json({ error: 'Client-Admin can only create Client-User accounts' }, 403)
+        if (!CLIENT_ROLES.includes(role)) return json({ error: 'Client-Admin can only create Client-User or Client-Admin accounts' }, 403)
       } else if (!INTERNAL_ROLES.includes(user.role)) {
         return json({ error: 'Forbidden' }, 403)
       }
-      // Admin role cannot create users — only Super-Admin
+      // Admin role cannot create users — only Super-Admin and Client-Admin
       if (user.role === ADMIN) return json({ error: 'Forbidden — only Super-Admin can create users' }, 403)
 
       const usernameVal = username.trim()
@@ -827,7 +847,7 @@ async function handleRoute(request, context) {
         return json({ error: 'Please enter a valid email address' }, 400)
       }
 
-      const assignedClientId = user.role === CLIENT_ADMIN ? user.client_id : (isClientRole ? (client_id || null) : null)
+      const assignedClientId = user.role === CLIENT_ADMIN ? (user.client_id || user.client?.id) : (isClientRole ? (client_id || null) : null)
       if (isClientRole && !assignedClientId) {
         return json({ error: 'Client Organization selection is required for Client roles' }, 400)
       }
@@ -1125,6 +1145,11 @@ async function handleRoute(request, context) {
       const user = await getUserFromRequest(request)
       if (!user || user.role !== SUPER_ADMIN) return json({ error: 'Forbidden' }, 403)
       const id = route.split('/')[2]
+      const { data: entry } = await sb.from('recycle_bin').select('*').eq('id', id).maybeSingle()
+      if (entry && (entry.table_name === 'users' || entry.entity_type === 'user')) {
+        const payload = entry.payload || {}
+        await deleteUserFromSupabaseAuth(payload.supabase_auth_id, payload.email)
+      }
       const { error } = await sb.from('recycle_bin').delete().eq('id', id)
       if (error) return json({ error: error.message }, 500)
       return json({ success: true })
