@@ -4107,7 +4107,7 @@ function JobCardDetailModal({
   )
 }
 
-function ProjectTeamTab({ project, orgUsers, assignedUserIds, onCreateUser, onSaveAssignments }) {
+function ProjectTeamTab({ project, orgUsers, assignedUserIds, onCreateUser, onSaveAssignments, onRefresh }) {
   const [selectedIds, setSelectedIds] = useState(assignedUserIds)
   const [saving, setSaving] = useState(false)
 
@@ -6068,6 +6068,7 @@ function ProjectDetailPage({
             assignedUserIds={assignedUserIds}
             onCreateUser={createTeamUser}
             onSaveAssignments={saveAssignments}
+            onRefresh={onRefresh}
           />
         )}
       </div>
