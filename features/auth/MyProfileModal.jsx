@@ -7,11 +7,12 @@ import TextInput from '@/components/ui/TextInput'
 import Btn from '@/components/ui/Btn'
 import { authService } from '@/services/authService'
 
-export function MyProfileModal({ user, onRefresh, onClose }) {
+export function MyProfileModal({ user, onRefresh, onClose, backdropEnabled = true, onBackdropChange }) {
   const [fullName, setFullName] = useState(user?.full_name || (user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : ''))
   const [phone, setPhone] = useState(user?.phone || '')
   const [usernameInput, setUsernameInput] = useState(user?.username || '')
   const [busy, setBusy] = useState(false)
+  const [backdropPreference, setBackdropPreference] = useState(Boolean(backdropEnabled))
 
   const username = user?.username || '—'
   const email = user?.email || `${username}@altiflow.io`
@@ -41,6 +42,7 @@ export function MyProfileModal({ user, onRefresh, onClose }) {
         await authService.changeUsername(trimmedUsername)
       }
       await authService.updateProfile({ full_name: fullName.trim(), phone: phone.trim() })
+      onBackdropChange?.(backdropPreference)
       toast.success('Profile updated successfully')
       await onRefresh?.()
       onClose()
@@ -119,6 +121,17 @@ export function MyProfileModal({ user, onRefresh, onClose }) {
                 />
               </div>
             </Field>
+
+            <div>
+              <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Background Theme</label>
+              <button
+                type="button"
+                onClick={() => setBackdropPreference((v) => !v)}
+                className="w-full h-11 px-3 rounded-xl border border-zinc-700 bg-zinc-950/70 text-left text-sm text-zinc-200 hover:border-zinc-500 transition-colors"
+              >
+                {backdropPreference ? 'On - Animated background visible' : 'Off - Plain background'}
+              </button>
+            </div>
           </div>
 
           {/* Read-Only Account Attributes Section */}

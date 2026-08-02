@@ -44,6 +44,7 @@ function AltiFlowMain() {
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [showCreateProject, setShowCreateProject] = useState(false)
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [showBackdrop, setShowBackdrop] = useState(true)
 
   const [dashboardData, setDashboardData] = useState({
     analytics: null,
@@ -245,10 +246,23 @@ function AltiFlowMain() {
     if (isClientUser) await loadCuData()
   }
 
+  function setBackdropPreference(enabled) {
+    const value = Boolean(enabled)
+    setShowBackdrop(value)
+    if (typeof window !== 'undefined' && user?.id) {
+      localStorage.setItem(`altiflow_backdrop_enabled_${user.id}`, value ? '1' : '0')
+    }
+  }
+
   useEffect(() => {
     if (!user) return
 
     setActiveTab('dashboard')
+
+    if (typeof window !== 'undefined') {
+      const savedBackdrop = localStorage.getItem(`altiflow_backdrop_enabled_${user.id}`)
+      setShowBackdrop(savedBackdrop !== '0')
+    }
 
     reloadRoleData()
   }, [user?.id, user?.role])
@@ -378,6 +392,7 @@ function AltiFlowMain() {
       }}
       onNotificationNavigate={handleNotificationNavigate}
       projectJobsCount={projectJobs.length}
+      showBackdrop={showBackdrop}
     >
       {activeTab === 'dashboard' && (
         activeProject
@@ -494,7 +509,15 @@ function AltiFlowMain() {
         <AuditTab logs={dashboardData?.audit_logs || []} />
       )}
 
-      {showProfile && <MyProfileModal user={user} onRefresh={reloadUser} onClose={() => setShowProfile(false)} />}
+      {showProfile && (
+        <MyProfileModal
+          user={user}
+          onRefresh={reloadUser}
+          onClose={() => setShowProfile(false)}
+          backdropEnabled={showBackdrop}
+          onBackdropChange={setBackdropPreference}
+        />
+      )}
       {showChangePassword && <ChangePassword user={user} onDone={reloadUser} onClose={() => setShowChangePassword(false)} />}
       {showCreateProject && (
         <CreateProjectModal

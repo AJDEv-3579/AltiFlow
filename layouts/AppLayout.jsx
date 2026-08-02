@@ -19,7 +19,7 @@ export function AppLayout({
   projectJobsCount = 0,
   onSidebarNavAction,
   onNotificationNavigate,
-  showBackdrop = false,
+  showBackdrop = true,
   children,
 }) {
   const [sidebarPinned, setSidebarPinned] = useState(false)
