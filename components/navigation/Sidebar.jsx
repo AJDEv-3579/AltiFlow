@@ -20,12 +20,11 @@ export function Sidebar({
   projects = [],
   onSelectProject,
   onCreateProject,
-  pinned = false,
   activeTab,
   onTabChange,
 }) {
   const [hovered, setHovered] = useState(false)
-  const collapsed = !pinned && !hovered
+  const collapsed = !hovered
 
   const role = user?.role || 'User'
   const isInternal = ['Super-Admin', 'Admin'].includes(role)

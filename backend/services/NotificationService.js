@@ -1,5 +1,6 @@
 import { supabaseAdmin as sb } from '@/lib/supabase'
 import { ADMIN, CLIENT_ADMIN, CLIENT_USER, SUPER_ADMIN } from '../constants/backendRoles'
+import { SupportRepository } from '../repositories/SupportRepository'
 
 const readByUser = new Map()
 const markAllByUser = new Map()
@@ -27,6 +28,7 @@ export class NotificationService {
   static async list(user, { limit = 50 }) {
     const scopedJobs = await NotificationService.getScopedJobs(user)
     const notifications = []
+    const jobCommentsByJob = new Map()
 
     if (scopedJobs.length > 0) {
       const jobIds = scopedJobs.map(j => j.id)
@@ -43,15 +45,46 @@ export class NotificationService {
         const job = scopedJobs.find(j => j.id === c.job_id)
         if (!job) continue
 
+        if (!jobCommentsByJob.has(c.job_id)) jobCommentsByJob.set(c.job_id, [])
+        jobCommentsByJob.get(c.job_id).push(c)
+
+        const recipients = new Set([
+          job.created_by,
+          job.assigned_to,
+          ...((jobCommentsByJob.get(c.job_id) || []).map(row => row.user_id).filter(Boolean)),
+        ])
+        recipients.delete(c.user_id)
+        if (!recipients.size) continue
+
         notifications.push({
           id: `job-comment-${c.id}`,
           type: 'job-comment',
+          group: 'job',
           title: 'New Job Card Comment',
           message: `${c.username || 'User'} commented on ${job.title || 'job card'}`,
           timestamp: c.created_at,
           target_type: 'job',
           project_id: job.project_id,
           job_id: job.id,
+          recipients: [...recipients],
+          actor_id: c.user_id || null,
+        })
+      }
+
+      for (const j of scopedJobs) {
+        if (!j.assigned_to || j.assigned_to === j.created_by) continue
+        notifications.push({
+          id: `job-assigned-${j.id}-${j.assigned_to}`,
+          type: 'job-assigned',
+          group: 'job',
+          title: 'Job Card Assigned',
+          message: `${j.title || 'Job card'} was assigned to you`,
+          timestamp: j.updated_at || j.created_at,
+          target_type: 'job',
+          project_id: j.project_id,
+          job_id: j.id,
+          recipients: [j.assigned_to],
+          actor_id: j.created_by || null,
         })
       }
 
@@ -62,17 +95,21 @@ export class NotificationService {
         notifications.push({
           id: `job-cancelled-${j.id}`,
           type: 'job-cancelled',
+          group: 'job',
           title: 'Job Card Cancelled',
           message: `${j.title || 'Job card'} was marked as cancelled/blocked`,
           timestamp: j.updated_at || j.created_at,
           target_type: 'job',
           project_id: j.project_id,
           job_id: j.id,
+          recipients: [j.created_by, j.assigned_to].filter(Boolean),
+          actor_id: null,
         })
       }
     }
 
     const scopedTickets = await NotificationService.getScopedSupportTickets(user, scopedJobs)
+
     const supportTicketIds = scopedTickets.map(t => t.id)
     const supportEvents = supportTicketIds.length > 0
       ? await NotificationService.getSupportEvents(supportTicketIds)
@@ -88,43 +125,93 @@ export class NotificationService {
     }, {})
 
     for (const t of scopedTickets) {
+      const ticketComments = Array.isArray(t.comments_log) ? t.comments_log : []
+      const ticketParticipants = new Set([
+        t.created_by,
+        t.assigned_to,
+        ...ticketComments.map(c => c.user_id).filter(Boolean),
+      ])
+
+      for (const c of ticketComments) {
+        if (!c.comment?.trim()) continue
+        const recipients = new Set(ticketParticipants)
+        recipients.delete(c.user_id)
+        if (!recipients.size) continue
+        notifications.push({
+          id: `support-comment-${t.id}-${c.id}`,
+          type: 'support-comment',
+          group: 'support',
+          title: 'New Support Ticket Comment',
+          message: `${c.username || 'User'} commented on support ticket ${t.title || ''}`.trim(),
+          timestamp: c.created_at || t.updated_at || t.created_at,
+          target_type: 'support-ticket',
+          ticket_id: t.id,
+          project_id: null,
+          recipients: [...recipients],
+          actor_id: c.user_id || null,
+        })
+      }
+
       const ticketEvents = supportEventsByTicket[t.id] || []
       for (const ev of ticketEvents) {
-        if (ev.parsed?.event_type === 'support_ticket_comment') {
-          notifications.push({
-            id: `support-comment-${ev.row.id}`,
-            type: 'support-comment',
-            title: 'New Support Ticket Comment',
-            message: `${ev.row.username || 'User'} commented on support ticket ${t.title || ''}`.trim(),
-            timestamp: ev.row.timestamp || t.updated_at || t.created_at,
-            target_type: 'support-ticket',
-            ticket_id: t.id,
-            project_id: null,
-          })
-        }
-
-        if (ev.parsed?.event_type === 'support_ticket_status_changed' && user.role === CLIENT_USER && t.created_by === user.id) {
+        if (ev.parsed?.event_type === 'support_ticket_status_changed') {
+          const recipients = new Set(ticketParticipants)
+          if (ev.row.username) {
+            recipients.delete(ev.row.user_id || null)
+          }
           notifications.push({
             id: `support-status-${ev.row.id}`,
             type: 'support-status',
+            group: 'support',
             title: 'Support Ticket Updated',
             message: `${t.title || 'Support ticket'} status changed to ${ev.parsed?.status || t.status}`,
             timestamp: ev.row.timestamp || t.updated_at || t.created_at,
             target_type: 'support-ticket',
             ticket_id: t.id,
             project_id: null,
+            recipients: [...recipients],
+            actor_id: null,
           })
         }
       }
     }
 
+    try {
+      const { data: featureAnnouncements = [] } = await sb
+        .from('feature_announcements')
+        .select('id, title, message, created_at, audience')
+        .order('created_at', { ascending: false })
+        .limit(25)
+
+      for (const a of featureAnnouncements) {
+        notifications.push({
+          id: `announcement-${a.id}`,
+          type: 'announcement',
+          group: 'announcement',
+          title: a.title || 'New Feature',
+          message: a.message || 'A new feature was added to the app.',
+          timestamp: a.created_at,
+          target_type: 'announcement',
+          recipients: [],
+          actor_id: null,
+        })
+      }
+    } catch {
+      // Optional table support only.
+    }
+
     notifications.sort((a, b) => toTs(b.timestamp) - toTs(a.timestamp))
+
+    const visibleNotifications = notifications.filter((n) => {
+      if (!Array.isArray(n.recipients) || n.recipients.length === 0) return true
+      return n.recipients.includes(user.id)
+    })
 
     const markAllTs = markAllByUser.get(user.id) || 0
     const readSet = getReadSet(user.id)
-    const sliced = notifications.slice(0, Math.max(1, Math.min(200, Number(limit) || 50))).map(n => ({
+    const sliced = visibleNotifications.slice(0, Math.max(1, Math.min(200, Number(limit) || 50))).map(n => ({
       ...n,
-      read: readSet.has(n.id) || toTs(n.timestamp) <= markAllTs,
+      read: readSet.has(n.id) || toTs(n.timestamp) <= markAllTs || (Array.isArray(n.recipients) && n.recipients.length > 0 && !n.recipients.includes(user.id)),
     }))
 
     const unreadCount = sliced.filter(n => !n.read).length
@@ -190,9 +277,14 @@ export class NotificationService {
   }
 
   static async getScopedSupportTickets(user, scopedJobs) {
+    const schema = await SupportRepository.getSchemaSupport()
+    const baseCols = ['id', 'client_id', 'created_by', 'title', 'status', 'created_at', 'updated_at']
+    if (schema.hasAssignedTo) baseCols.push('assigned_to')
+    if (schema.hasCommentsLog) baseCols.push('comments_log')
+
     const { data: tickets = [] } = await sb
       .from('support_tickets')
-      .select('id, client_id, created_by, title, status, created_at, updated_at')
+      .select(baseCols.join(', '))
       .order('updated_at', { ascending: false })
       .limit(600)
 

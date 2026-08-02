@@ -28,6 +28,7 @@ const ProjectTrackerTab = dynamic(() => import('@/features/tracker/ProjectTracke
 const IssueTrackerTab = dynamic(() => import('@/features/tracker/IssueTrackerTab'))
 const ProjectTeamTab = dynamic(() => import('@/features/admin/ProjectTeamTab'))
 const CreateProjectModal = dynamic(() => import('@/features/projects/CreateProjectModal'))
+const JobCardDetailModal = dynamic(() => import('@/features/jobs/JobCardDetailModal'))
 
 function ProjectSelectionEmptyState({ message }) {
   return (
@@ -65,6 +66,7 @@ function AltiFlowMain() {
   const [activeProjectId, setActiveProjectId] = useState(null)
   const [projectJobs, setProjectJobs] = useState([])
   const [assignedUserIds, setAssignedUserIds] = useState([])
+  const [selectedPipelineJob, setSelectedPipelineJob] = useState(null)
 
   const isInternal = ['Super-Admin', 'Admin'].includes(user?.role)
   const isSuperAdmin = user?.role === 'Super-Admin'
@@ -426,6 +428,7 @@ function AltiFlowMain() {
               jobs={projectJobs}
               user={user}
               onMove={movePipelineJob}
+              onOpenJobDetail={setSelectedPipelineJob}
             />
           )
           : projectRequiredState
@@ -527,6 +530,16 @@ function AltiFlowMain() {
             reloadRoleData({ force: true })
           }}
           onCancel={() => setShowCreateProject(false)}
+        />
+      )}
+      {selectedPipelineJob && activeProject && (
+        <JobCardDetailModal
+          job={selectedPipelineJob}
+          project={activeProject}
+          orgUsers={orgUsers}
+          onClose={() => setSelectedPipelineJob(null)}
+          onRefresh={() => refreshProjectAwareModules(activeProject.id)}
+          isAdmin={canManageTeam}
         />
       )}
     </AppLayout>

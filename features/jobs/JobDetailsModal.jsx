@@ -6,12 +6,14 @@ import GlassCard from '@/components/ui/GlassCard'
 import Btn from '@/components/ui/Btn'
 import { api } from '@/services/api'
 import { getJobPipelineStage } from '@/utils/formatters'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 export function JobDetailsModal({ job, onClose, onRefresh, isAdmin = false }) {
   const [comment, setComment] = useState('')
   const [commentStage, setCommentStage] = useState('General')
   const [busy, setBusy] = useState(false)
   const [commentsLog, setCommentsLog] = useState(job.comments_log || [])
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     setCommentsLog(job.comments_log || [])
@@ -107,7 +109,7 @@ export function JobDetailsModal({ job, onClose, onRefresh, isAdmin = false }) {
           {/* Core Info Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <GlassCard className="p-3">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500">Field Name</div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">{isMobile ? 'Field' : 'Field Name'}</div>
               <div className="font-semibold text-zinc-100 text-sm truncate" title={job.title}>{job.title}</div>
             </GlassCard>
             <GlassCard className="p-3">

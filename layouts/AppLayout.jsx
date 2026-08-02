@@ -22,16 +22,7 @@ export function AppLayout({
   showBackdrop = true,
   children,
 }) {
-  const [sidebarPinned, setSidebarPinned] = useState(false)
-
-  function handleSidebarNavClick(nextTab, { isActive, isExpanded }) {
-    if (isExpanded) {
-      if (isActive) {
-        setSidebarPinned(false)
-      } else {
-        setSidebarPinned(true)
-      }
-    }
+  function handleSidebarNavClick(nextTab) {
     onSidebarNavAction?.(nextTab)
   }
 
@@ -57,7 +48,6 @@ export function AppLayout({
           projects={projects}
           onSelectProject={onSelectProject}
           onCreateProject={onCreateProject}
-          pinned={sidebarPinned}
           activeTab={activeTab}
           onTabChange={handleSidebarNavClick}
           projectJobsCount={projectJobsCount}

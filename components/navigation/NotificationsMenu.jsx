@@ -118,14 +118,68 @@ export function NotificationsMenu({ onNavigate, user }) {
     try {
       await notificationService.markAllRead()
       saveLocalState(user?.id, { readIds: [], markAllTs: Date.now() })
-      setItems(prev => prev.map(n => ({ ...n, read: true })))
+      setItems([])
       setUnreadCount(0)
     } catch (e) {
       toast.error(e.message)
     }
   }
 
+  const groupedItems = useMemo(() => {
+    const groups = {
+      announcement: [],
+      job: [],
+      support: [],
+      other: [],
+    }
+    for (const item of items) {
+      const key = item.group || 'other'
+      if (!groups[key]) groups.other.push(item)
+      else groups[key].push(item)
+    }
+    return groups
+  }, [items])
+
   const unreadItems = useMemo(() => items.filter(i => !i.read), [items])
+
+  function renderGroup(title, groupItems) {
+    if (!groupItems.length) return null
+    return (
+      <div className="border-b border-zinc-800/50 last:border-b-0">
+        <div className="px-3.5 py-2 text-[10px] uppercase tracking-wider text-zinc-500 bg-zinc-950/70 sticky top-0 z-10">
+          {title}
+        </div>
+        {groupItems.map(n => {
+          const Icon = iconFor(n.type)
+          return (
+            <button
+              key={n.id}
+              type="button"
+              onClick={async () => {
+                if (!n.read) await handleMarkRead(n.id)
+                onNavigate?.(n)
+                setOpen(false)
+              }}
+              className={`w-full px-3.5 py-3 text-left border-t border-zinc-800/70 hover:bg-zinc-900/70 transition-colors cursor-pointer ${n.read ? 'opacity-80' : ''}`}
+            >
+              <div className="flex items-start gap-2.5">
+                <div className={`mt-0.5 w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${n.read ? 'border-zinc-700 text-zinc-400' : 'border-blue-500/40 text-blue-400 bg-blue-500/10'}`}>
+                  <Icon size={14} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className={`text-xs font-semibold truncate ${n.read ? 'text-zinc-300' : 'text-zinc-100'}`}>{n.title}</div>
+                    <div className="text-[10px] text-zinc-500 shrink-0">{timeAgo(n.timestamp)}</div>
+                  </div>
+                  <div className="text-[11px] text-zinc-400 mt-0.5 line-clamp-2">{n.message}</div>
+                </div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
 
   return (
     <div className="relative" ref={menuRef}>
@@ -162,35 +216,10 @@ export function NotificationsMenu({ onNavigate, user }) {
           <div className="max-h-[24rem] overflow-y-auto no-scrollbar">
             {loading && <div className="px-4 py-6 text-xs text-zinc-500">Loading notifications...</div>}
             {!loading && items.length === 0 && <div className="px-4 py-6 text-xs text-zinc-500">No notifications yet.</div>}
-
-            {!loading && items.map(n => {
-              const Icon = iconFor(n.type)
-              return (
-                <button
-                  key={n.id}
-                  type="button"
-                  onClick={async () => {
-                    if (!n.read) await handleMarkRead(n.id)
-                    onNavigate?.(n)
-                    setOpen(false)
-                  }}
-                  className={`w-full px-3.5 py-3 text-left border-b border-zinc-800/70 hover:bg-zinc-900/70 transition-colors cursor-pointer ${n.read ? 'opacity-80' : ''}`}
-                >
-                  <div className="flex items-start gap-2.5">
-                    <div className={`mt-0.5 w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${n.read ? 'border-zinc-700 text-zinc-400' : 'border-blue-500/40 text-blue-400 bg-blue-500/10'}`}>
-                      <Icon size={14} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className={`text-xs font-semibold truncate ${n.read ? 'text-zinc-300' : 'text-zinc-100'}`}>{n.title}</div>
-                        <div className="text-[10px] text-zinc-500 shrink-0">{timeAgo(n.timestamp)}</div>
-                      </div>
-                      <div className="text-[11px] text-zinc-400 mt-0.5 line-clamp-2">{n.message}</div>
-                    </div>
-                  </div>
-                </button>
-              )
-            })}
+            {!loading && groupedItems.announcement.length > 0 && renderGroup('Announcements', groupedItems.announcement)}
+            {!loading && groupedItems.job.length > 0 && renderGroup('Job Cards', groupedItems.job)}
+            {!loading && groupedItems.support.length > 0 && renderGroup('Support Tickets', groupedItems.support)}
+            {!loading && groupedItems.other.length > 0 && renderGroup('Other Activity', groupedItems.other)}
           </div>
         </div>
       )}
