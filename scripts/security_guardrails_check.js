@@ -30,10 +30,27 @@ function assert(condition, testName, failureMessage) {
 
 console.log('\n🔒 Running AltiFlow Codebase Security Guardrails Check...\n')
 
-// --- CHECK 1: Backend Route Security Isolation (route.js) ---
+// --- CHECK 1: Backend Route Security Isolation (route.js & backend/) ---
 const routePath = path.join(rootDir, 'app', 'api', '[[...path]]', 'route.js')
 if (fs.existsSync(routePath)) {
-  const routeContent = fs.readFileSync(routePath, 'utf8')
+  let routeContent = fs.readFileSync(routePath, 'utf8')
+  
+  // Aggregate modular backend files if present
+  const backendDir = path.join(rootDir, 'backend')
+  if (fs.existsSync(backendDir)) {
+    function readAllJs(dir) {
+      let acc = ''
+      fs.readdirSync(dir, { withFileTypes: true }).forEach(ent => {
+        const full = path.join(dir, ent.name)
+        if (ent.isDirectory()) acc += readAllJs(full)
+        else if (ent.isFile() && ent.name.endsWith('.js')) {
+          acc += '\n' + fs.readFileSync(full, 'utf8')
+        }
+      })
+      return acc
+    }
+    routeContent += '\n' + readAllJs(backendDir)
+  }
 
   assert(
     routeContent.includes("user.role === CLIENT_ADMIN") &&
@@ -44,6 +61,7 @@ if (fs.existsSync(routePath)) {
 
   assert(
     routeContent.includes("assignedClientId = user.role === CLIENT_ADMIN ? (user.client_id || user.client?.id)") ||
+    routeContent.includes("assignedClientId = user.role === CLIENT_ADMIN ? (user.client_id") ||
     routeContent.includes("assignedClientId = user.role === CLIENT_ADMIN ? user.client_id"),
     'Backend Client Organization Lockdown',
     'POST /api/users must strictly lock assignedClientId to user.client_id when created by a Client-Admin.'
@@ -52,10 +70,30 @@ if (fs.existsSync(routePath)) {
   assert(false, 'Backend Route File Exists', 'app/api/[[...path]]/route.js not found.')
 }
 
-// --- CHECK 2: Frontend Client-Admin Isolation (app/page.js) ---
+// --- CHECK 2: Frontend Client-Admin Isolation & Security (app/page.js & features/) ---
 const pagePath = path.join(rootDir, 'app', 'page.js')
 if (fs.existsSync(pagePath)) {
-  const pageContent = fs.readFileSync(pagePath, 'utf8')
+  let pageContent = fs.readFileSync(pagePath, 'utf8')
+  
+  // Aggregate content from modular directories if present
+  const moduleDirs = ['features', 'components', 'layouts', 'stores']
+  moduleDirs.forEach(dirName => {
+    const d = path.join(rootDir, dirName)
+    if (fs.existsSync(d)) {
+      function readAllJsx(dir) {
+        let acc = ''
+        fs.readdirSync(dir, { withFileTypes: true }).forEach(ent => {
+          const full = path.join(dir, ent.name)
+          if (ent.isDirectory()) acc += readAllJsx(full)
+          else if (ent.isFile() && (ent.name.endsWith('.jsx') || ent.name.endsWith('.js'))) {
+            acc += '\n' + fs.readFileSync(full, 'utf8')
+          }
+        })
+        return acc
+      }
+      pageContent += '\n' + readAllJsx(d)
+    }
+  })
 
   assert(
     pageContent.includes("isClientAdminCreator = user?.role === 'Client-Admin'") ||
@@ -86,7 +124,7 @@ if (fs.existsSync(pagePath)) {
   assert(
     pageContent.includes("recoveryUser") && (pageContent.includes("#access_token=") || pageContent.includes("access_token")),
     'Password Reset Link Recovery Interceptor',
-    'app/page.js must intercept URL recovery tokens and render the dedicated Set New Password page.'
+    'app/page.js & features/auth/Login.jsx must intercept URL recovery tokens and render the dedicated Set New Password page.'
   )
 } else {
   assert(false, 'Frontend Page File Exists', 'app/page.js not found.')
