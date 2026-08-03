@@ -56,16 +56,70 @@ export function ProjectDashboardTab({
   ].filter(d => d.value > 0), [doneCount, inProgressCount, pendingCount, cancelledCount])
 
   const jobsOverTimeData = useMemo(() => {
-    if (jobs.length === 0) return []
+    const windowWeeks = 8
+    const startOfWeek = (value) => {
+      const d = new Date(value)
+      if (isNaN(d.getTime())) return null
+      d.setHours(0, 0, 0, 0)
+      const day = d.getDay()
+      const diff = day === 0 ? -6 : (1 - day)
+      d.setDate(d.getDate() + diff)
+      return d
+    }
+
+    const toWeekKey = (value) => {
+      const d = new Date(value)
+      if (isNaN(d.getTime())) return null
+      const sow = startOfWeek(d)
+      return `${sow.getFullYear()}-${String(sow.getMonth() + 1).padStart(2, '0')}-${String(sow.getDate()).padStart(2, '0')}`
+    }
+
+    const latestProjectEventTs = jobs.reduce((maxTs, job) => {
+      const createdTs = new Date(job.created_at || 0).getTime()
+      const deliveredValue = job.delivery_confirmed_at || job.delivered_at || (getJobPipelineStage(job) === 'Done' ? job.updated_at : null)
+      const deliveredTs = new Date(deliveredValue || 0).getTime()
+      const candidate = Math.max(Number.isNaN(createdTs) ? 0 : createdTs, Number.isNaN(deliveredTs) ? 0 : deliveredTs)
+      return Math.max(maxTs, candidate)
+    }, 0)
+
+    const anchorDate = latestProjectEventTs > 0 ? new Date(latestProjectEventTs) : new Date()
+    anchorDate.setHours(0, 0, 0, 0)
+
+    const anchorWeekStart = startOfWeek(anchorDate)
+    const start = new Date(anchorWeekStart)
+    start.setDate(start.getDate() - ((windowWeeks - 1) * 7))
+
     const buckets = {}
-    jobs.forEach(job => {
-      const d = new Date(job.created_at || Date.now())
-      if (isNaN(d.getTime())) return
-      const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      if (!buckets[label]) buckets[label] = { date: label, total: 0, done: 0, ts: d.getTime() }
-      buckets[label].total += 1
-      if (getJobPipelineStage(job) === 'Done') buckets[label].done += 1
+    for (let i = 0; i < windowWeeks; i++) {
+      const d = new Date(start)
+      d.setDate(start.getDate() + (i * 7))
+      const key = toWeekKey(d)
+      const weekEnd = new Date(d)
+      weekEnd.setDate(d.getDate() + 6)
+      buckets[key] = {
+        key,
+        date: `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+        total: 0,
+        done: 0,
+        ts: d.getTime(),
+      }
+    }
+
+    jobs.forEach((job) => {
+      const createdKey = toWeekKey(job.created_at)
+      if (createdKey && buckets[createdKey]) {
+        buckets[createdKey].total += 1
+      }
+
+      if (getJobPipelineStage(job) === 'Done') {
+        const deliveredAt = job.delivery_confirmed_at || job.delivered_at || job.updated_at || job.created_at
+        const deliveredKey = toWeekKey(deliveredAt)
+        if (deliveredKey && buckets[deliveredKey]) {
+          buckets[deliveredKey].done += 1
+        }
+      }
     })
+
     return Object.values(buckets).sort((a, b) => a.ts - b.ts)
   }, [jobs])
 
