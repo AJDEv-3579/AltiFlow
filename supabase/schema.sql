@@ -248,6 +248,7 @@ CREATE TABLE IF NOT EXISTS public.jobs (
 );
 
 ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS is_priority BOOLEAN DEFAULT false;
+ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS r2_data JSONB DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS jobs_project_id_idx ON public.jobs (project_id);
 CREATE INDEX IF NOT EXISTS jobs_status_idx     ON public.jobs (status);

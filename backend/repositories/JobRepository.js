@@ -2,6 +2,7 @@ import { supabaseAdmin as sb } from '@/lib/supabase'
 
 let jobsAdvancedSchemaAvailable = null
 let jobsPrioritySchemaAvailable = null
+let jobsR2SchemaAvailable = null
 
 export class JobRepository {
   static async hasAdvancedSchema() {
@@ -24,6 +25,16 @@ export class JobRepository {
     return !error
   }
 
+  static async hasR2Schema() {
+    if (jobsR2SchemaAvailable === true) return true
+    const { error } = await sb
+      .from('jobs')
+      .select('id, r2_data')
+      .limit(1)
+    if (!error) jobsR2SchemaAvailable = true
+    return !error
+  }
+
   static extractPriority(j) {
     if (!j) return false
     if (j.is_priority !== undefined && j.is_priority !== null) return Boolean(j.is_priority)
@@ -35,8 +46,10 @@ export class JobRepository {
 
   static async getSelectColumns(advanced, includeUserRelations = false) {
     const priorityAvailable = await JobRepository.hasPrioritySchema()
+    const r2Available = await JobRepository.hasR2Schema()
     const basePriority = priorityAvailable ? ', is_priority' : ''
-    const base = `id, project_id, title, description, status, assigned_to, created_by, created_at, updated_at${basePriority}`
+    const baseR2 = r2Available ? ', r2_data' : ''
+    const base = `id, project_id, title, description, status, assigned_to, created_by, created_at, updated_at${basePriority}${baseR2}`
     const advancedCols = 'sc_status, uni_status, category, capture_date, drone_name, flight_count, flights, has_logs, comments'
     const relations = includeUserRelations ? ', assigned_user:assigned_to(username), creator:created_by(username)' : ''
     return advanced ? `${base}, ${advancedCols}${relations}` : `${base}${relations}`

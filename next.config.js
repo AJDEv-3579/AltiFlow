@@ -4,9 +4,17 @@ const nextConfig = {
     unoptimized: true,
   },
   experimental: {
-    serverComponentsExternalPackages: ['mongodb'],
+    serverComponentsExternalPackages: ['mongodb', 'geotiff', 'web-worker'],
   },
   webpack(config, { dev }) {
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      encoding: false,
+      fs: false,
+      child_process: false,
+      net: false,
+      tls: false,
+    };
     if (dev) {
       // Reduce CPU/memory from file watching
       config.watchOptions = {
