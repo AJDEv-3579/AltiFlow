@@ -142,14 +142,6 @@ async function handleRoute(request, context) {
       const { data: jobs } = await supabaseAdmin.from('jobs').select('*').order('created_at', { ascending: false })
       return json({ jobs: jobs || [] })
     }
-    if (route === '/test-gis/tiles' && method === 'GET') {
-      const { TestGISTileService } = require('@/backend/services/TestGISTileService')
-      return TestGISTileService.renderTile(request)
-    }
-
-
-
-
     return json({ error: `Route ${route} not found` }, 404)
   } catch (e) {
     console.error('API Error:', e)
