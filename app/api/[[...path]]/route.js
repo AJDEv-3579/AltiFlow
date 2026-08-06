@@ -11,6 +11,7 @@ import { AnalyticsController } from '@/backend/controllers/AnalyticsController'
 import { PushTokenController } from '@/backend/controllers/PushTokenController'
 import { AuthMigrationController } from '@/backend/controllers/AuthMigrationController'
 import { NotificationController } from '@/backend/controllers/NotificationController'
+import { R2Controller } from '@/backend/controllers/R2Controller'
 
 export async function OPTIONS() { return handleOptionsRequest() }
 
@@ -122,6 +123,32 @@ async function handleRoute(request, context) {
     if (route.match(/^\/admin\/auth-migration\/link-user\/[^/]+$/) && method === 'POST') return AuthMigrationController.linkUser(request, route.split('/')[4])
     if (route.match(/^\/admin\/auth-migration\/send-invite\/[^/]+$/) && method === 'POST') return AuthMigrationController.sendInvite(request, route.split('/')[4])
     if (route === '/admin/auth-migration/migrate-all' && method === 'POST') return AuthMigrationController.migrateAll(request)
+
+    // Cloudflare R2 Integration
+    if (route === '/r2/presigned-upload' && method === 'POST') return R2Controller.generatePresignedUpload(request)
+    if (route === '/r2/save-metadata' && method === 'POST') return R2Controller.saveR2Metadata(request)
+    if (route === '/r2/presigned-download' && method === 'POST') return R2Controller.generatePresignedDownload(request)
+    if (route === '/r2/stream-file' && method === 'GET') return R2Controller.streamFile(request)
+
+    if (route === '/r2/sync-all' && (method === 'POST' || method === 'GET')) {
+      const { R2Service } = require('@/backend/services/R2Service')
+      const result = await R2Service.syncAllR2Data()
+      return json(result)
+    }
+
+    // Standalone GIS Workbench API
+    if (route === '/test-gis/jobs' && method === 'GET') {
+      const { supabaseAdmin } = require('@/lib/supabase')
+      const { data: jobs } = await supabaseAdmin.from('jobs').select('*').order('created_at', { ascending: false })
+      return json({ jobs: jobs || [] })
+    }
+    if (route === '/test-gis/tiles' && method === 'GET') {
+      const { TestGISTileService } = require('@/backend/services/TestGISTileService')
+      return TestGISTileService.renderTile(request)
+    }
+
+
+
 
     return json({ error: `Route ${route} not found` }, 404)
   } catch (e) {

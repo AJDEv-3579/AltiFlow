@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
-import { Star, X, Edit3, Trash2, FileWarning } from 'lucide-react'
+import { Star, X, Edit3, Trash2, FileWarning, Plus, Eye, Layers } from 'lucide-react'
 import GlassCard from '@/components/ui/GlassCard'
 import Btn from '@/components/ui/Btn'
 import { api } from '@/services/api'
@@ -12,6 +12,7 @@ export function JobCardDetailModal({
   job,
   project,
   orgUsers = [],
+  user,
   onClose,
   onRefresh,
   isAdmin,
@@ -21,6 +22,8 @@ export function JobCardDetailModal({
   onDelete,
   onRequestDelete,
   onUpdateStage,
+  onOpenAddData,
+  onOpenViewData,
 }) {
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
@@ -130,6 +133,43 @@ export function JobCardDetailModal({
                   Logs Uploaded
                 </span>
               )}
+            </div>
+
+            {/* R2 GIS Action Buttons */}
+            <div className="flex items-center gap-2 shrink-0">
+              {['Super-Admin', 'Admin'].includes(user?.role) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose?.()
+                    onOpenAddData?.(job)
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 border border-blue-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                  title="Add Data (Field Orthomosaic / Vector Grid to Cloudflare R2)"
+                >
+                  <Plus size={14} />
+                  <span>Add Data</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  onClose?.()
+                  const win = window.open(`/gis-viewer?jobId=${job.id}`, 'altiflow_gis_workspace')
+                  try {
+                    const channel = new BroadcastChannel('altiflow_gis_workspace')
+                    if (job.r2_data?.orthomosaic) channel.postMessage({ jobId: job.id, dataType: 'orthomosaic' })
+                    if (job.r2_data?.vector_grid) channel.postMessage({ jobId: job.id, dataType: 'vector_grid' })
+                    channel.close()
+                  } catch (err) { console.warn(err) }
+                  if (win) win.focus()
+                }}
+                className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                title="View in GIS Workspace"
+              >
+                <Eye size={14} />
+                <span>View Data</span>
+              </button>
             </div>
           </div>
 

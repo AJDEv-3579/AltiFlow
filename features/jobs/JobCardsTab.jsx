@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import {
-  Upload, FileText, Plus, ClipboardList, Star, Camera, FileCheck,
+  Upload, FileText, Plus, ClipboardList, Star, Camera, FileCheck, Eye, Layers,
 } from 'lucide-react'
 import GlassCard from '@/components/ui/GlassCard'
 import Btn from '@/components/ui/Btn'
@@ -14,6 +15,9 @@ import BulkUploadJobsModal from './BulkUploadJobsModal'
 import ImportCSVInfoModal from './ImportCSVInfoModal'
 import EditFieldJobFormModal from './EditFieldJobFormModal'
 import JobCardDetailModal from './JobCardDetailModal'
+import AddR2DataModal from './AddR2DataModal'
+
+const R2GISViewerModal = dynamic(() => import('./R2GISViewerModal'), { ssr: false })
 
 export function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin }) {
   const [showAdd, setShowAdd] = useState(false)
@@ -21,6 +25,8 @@ export function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin 
   const [showCSVInfo, setShowCSVInfo] = useState(false)
   const [editingJob, setEditingJob] = useState(null)
   const [selectedJobModal, setSelectedJobModal] = useState(null)
+  const [addR2ModalJob, setAddR2ModalJob] = useState(null)
+  const [viewerModalJob, setViewerModalJob] = useState(null)
   const [updating, setUpdating] = useState(null)
   const [commentDrafts, setCommentDrafts] = useState({})
   const [commentBusy, setCommentBusy] = useState(null)
@@ -306,6 +312,66 @@ export function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin 
                             )}
                           </div>
                         </button>
+
+                        {/* R2 Job Card Action Icons Bar */}
+                        <div className="px-5 py-2.5 bg-zinc-950/60 border-t border-zinc-800/40 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 font-medium truncate">
+                            {job.r2_data?.orthomosaic && (
+                              <span className="px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[9px] font-mono">Ortho</span>
+                            )}
+                            {job.r2_data?.vector_grid && (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-mono">Grid</span>
+                            )}
+                            {!job.r2_data?.orthomosaic && !job.r2_data?.vector_grid && (
+                              <span className="text-zinc-600 text-[10px] italic">None</span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Super-Admin and Admin roles get Add Data icon */}
+                            {['Super-Admin', 'Admin'].includes(user?.role) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setAddR2ModalJob(job)
+                                }}
+                                className="px-2 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 border border-blue-500/30 text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                                title="Add Data (Field Orthomosaic / Vector Grid to Cloudflare R2)"
+                              >
+                                <Plus size={13} />
+                                <span>Add Data</span>
+                              </button>
+                            )}
+
+                            {/* All Roles (Super-Admin, Admin, Client-Admin, Client-User) get View Data icon */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const win = window.open(`/gis-viewer?jobId=${job.id}`, 'altiflow_gis_workspace')
+                                try {
+                                  const channel = new BroadcastChannel('altiflow_gis_workspace')
+                                  if (job.r2_data?.orthomosaic) {
+                                    channel.postMessage({ jobId: job.id, dataType: 'orthomosaic' })
+                                  }
+                                  if (job.r2_data?.vector_grid) {
+                                    channel.postMessage({ jobId: job.id, dataType: 'vector_grid' })
+                                  }
+                                  channel.close()
+                                } catch (err) {
+                                  console.warn('BroadcastChannel notice:', err.message)
+                                }
+                                if (win) win.focus()
+                              }}
+                              className="px-2 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                              title="Open in Dedicated GIS Workspace Tab"
+                            >
+                              <Eye size={13} />
+                              <span>View Data</span>
+                            </button>
+                          </div>
+                        </div>
                       </GlassCard>
                     </motion.div>
                   )
@@ -322,6 +388,7 @@ export function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin 
             job={selectedJobModal}
             project={project}
             orgUsers={orgUsers}
+            user={user}
             onClose={() => setSelectedJobModal(null)}
             onRefresh={onRefresh}
             isAdmin={isAdmin}
@@ -331,6 +398,32 @@ export function JobCardsTab({ project, user, orgUsers, jobs, onRefresh, isAdmin 
             onDelete={deleteJob}
             onRequestDelete={requestDeleteJob}
             onUpdateStage={updateStage}
+            onOpenAddData={(j) => setAddR2ModalJob(j)}
+            onOpenViewData={(j) => setViewerModalJob(j)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {addR2ModalJob && (
+          <AddR2DataModal
+            job={addR2ModalJob}
+            project={project}
+            onClose={() => setAddR2ModalJob(null)}
+            onDone={() => {
+              setAddR2ModalJob(null)
+              onRefresh?.()
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {viewerModalJob && (
+          <R2GISViewerModal
+            job={viewerModalJob}
+            project={project}
+            onClose={() => setViewerModalJob(null)}
           />
         )}
       </AnimatePresence>

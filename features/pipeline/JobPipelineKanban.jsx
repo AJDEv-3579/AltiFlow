@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors, DragOverlay,
 } from '@dnd-kit/core'
-import { Star, ChevronRight, X } from 'lucide-react'
+import { Star, ChevronRight, X, Eye } from 'lucide-react'
 import Btn from '@/components/ui/Btn'
 import { PIPELINE_STAGES } from '@/constants/statuses'
 import { getJobPipelineStage } from '@/utils/formatters'
@@ -60,21 +60,43 @@ export function JobPipelineCard({ job, onOpenWorkspaceById, onOpenJobDetail }) {
         <div className="text-[10px] uppercase tracking-wider text-zinc-600">
           {job.category || 'Stand Count'} · {job.assigned_to_name || 'Unassigned'}
         </div>
-        <Btn
-          size="sm"
-          variant="ghost"
-          onClick={(e) => {
-            e.stopPropagation()
-            if (onOpenJobDetail) {
-              onOpenJobDetail(job)
-            } else {
-              onOpenWorkspaceById?.(job.project_id)
-            }
-          }}
-          icon={ChevronRight}
-        >
-          Open
-        </Btn>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {(job.r2_data?.orthomosaic || job.r2_data?.vector_grid) && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                const win = window.open(`/gis-viewer?jobId=${job.id}`, 'altiflow_gis_workspace')
+                try {
+                  const channel = new BroadcastChannel('altiflow_gis_workspace')
+                  if (job.r2_data?.orthomosaic) channel.postMessage({ jobId: job.id, dataType: 'orthomosaic' })
+                  if (job.r2_data?.vector_grid) channel.postMessage({ jobId: job.id, dataType: 'vector_grid' })
+                  channel.close()
+                } catch (err) { console.warn(err) }
+                if (win) win.focus()
+              }}
+              className="px-2 py-0.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+              title="View in GIS Workspace"
+            >
+              <Eye size={12} /> View Data
+            </button>
+          )}
+          <Btn
+            size="sm"
+            variant="ghost"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (onOpenJobDetail) {
+                onOpenJobDetail(job)
+              } else {
+                onOpenWorkspaceById?.(job.project_id)
+              }
+            }}
+            icon={ChevronRight}
+          >
+            Open
+          </Btn>
+        </div>
       </div>
     </motion.div>
   )
