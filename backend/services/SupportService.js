@@ -3,7 +3,7 @@ import { SupportRepository } from '../repositories/SupportRepository'
 import { UserRepository } from '../repositories/UserRepository'
 import { ProjectRepository } from '../repositories/ProjectRepository'
 import { ActivityRepository } from '../repositories/ActivityRepository'
-import { CLIENT_ROLES, INTERNAL_ROLES, ADMIN, CLIENT_ADMIN, CLIENT_USER } from '../constants/backendRoles'
+import { CLIENT_ROLES, INTERNAL_ROLES, SUPER_ADMIN, ADMIN, CLIENT_ADMIN, CLIENT_USER } from '../constants/backendRoles'
 
 export class SupportService {
   static assertTicketAccess(user, ticket) {
@@ -48,7 +48,7 @@ export class SupportService {
   }
 
   static async createTicket(user, { title, description, severity }) {
-    if (![ADMIN, CLIENT_ADMIN, CLIENT_USER].includes(user.role)) throw { message: 'Forbidden', status: 403 }
+    if (![SUPER_ADMIN, ADMIN, CLIENT_ADMIN, CLIENT_USER].includes(user.role)) throw { message: 'Forbidden', status: 403 }
     if (!title?.trim() || !description?.trim()) throw { message: 'title and description are required', status: 400 }
 
     const sev = ['Low', 'Medium', 'High', 'Critical'].includes(severity) ? severity : 'Medium'
