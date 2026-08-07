@@ -20,8 +20,8 @@ export function SupportTicketsTab({ user, project = null }) {
   const [commentDrafts, setCommentDrafts] = useState({})
   const [postingComment, setPostingComment] = useState(false)
 
-  async function loadTickets() {
-    setLoading(true)
+  async function loadTickets(showLoading = true) {
+    if (showLoading) setLoading(true)
     try {
       const projectQuery = project?.id ? `&project_id=${encodeURIComponent(project.id)}` : ''
       const r = await api(`/support-tickets?limit=80&refresh=1${projectQuery}`)
@@ -30,7 +30,7 @@ export function SupportTicketsTab({ user, project = null }) {
     } catch (e) {
       toast.error(e.message)
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }
 
@@ -68,7 +68,7 @@ export function SupportTicketsTab({ user, project = null }) {
       })
       toast.success('Support ticket raised successfully')
       setForm({ title: '', description: '', severity: 'Medium' })
-      await loadTickets()
+      await loadTickets(false)
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -83,7 +83,7 @@ export function SupportTicketsTab({ user, project = null }) {
         body: JSON.stringify({ status }),
       })
       toast.success(status === 'Open' ? 'Ticket reopened' : `Ticket status updated to ${status}`)
-      await loadTickets()
+      await loadTickets(false)
       if (expandedTicketId === id) loadComments(id)
     } catch (e) {
       toast.error(e.message)
@@ -102,7 +102,7 @@ export function SupportTicketsTab({ user, project = null }) {
       toast.success('Comment added')
       setCommentDrafts(prev => ({ ...prev, [ticketId]: '' }))
       await loadComments(ticketId)
-      await loadTickets()
+      await loadTickets(false)
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -116,7 +116,7 @@ export function SupportTicketsTab({ user, project = null }) {
     try {
       await api(`/support-tickets/${id}`, { method: 'DELETE' })
       toast.success('Ticket moved to Bin')
-      await loadTickets()
+      await loadTickets(false)
     } catch (e) {
       toast.error(e.message)
     }

@@ -259,11 +259,17 @@ function AltiFlowMain() {
   useEffect(() => {
     if (!user) return
 
-    setActiveTab('dashboard')
-
     if (typeof window !== 'undefined') {
       const savedBackdrop = localStorage.getItem(`altiflow_backdrop_enabled_${user.id}`)
       setShowBackdrop(savedBackdrop !== '0')
+      const savedTab = localStorage.getItem(`altiflow_active_tab_${user.id}`)
+      if (savedTab) {
+        setActiveTab(savedTab)
+      } else {
+        setActiveTab('dashboard')
+      }
+    } else {
+      setActiveTab('dashboard')
     }
 
     reloadRoleData()
@@ -294,27 +300,27 @@ function AltiFlowMain() {
   }, [isInternal, isClientAdmin, dashboardData?.users, caOrgUsers])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || !availableProjects || availableProjects.length === 0) return
 
     const storageKey = `altiflow_active_project_id_${user.id}`
-    const ids = new Set((availableProjects || []).map(p => p.id))
+    const ids = new Set(availableProjects.map(p => p.id))
 
+    let savedId = typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null
     let nextId = activeProjectId
-    if (!nextId && typeof window !== 'undefined') {
-      nextId = localStorage.getItem(storageKey)
+
+    if (savedId && ids.has(savedId)) {
+      nextId = savedId
+    } else if (!nextId || !ids.has(nextId)) {
+      nextId = availableProjects[0]?.id || null
     }
 
-    if (!nextId || !ids.has(nextId)) {
-      nextId = availableProjects?.[0]?.id || null
-    }
-
-    if (nextId !== activeProjectId) {
+    if (nextId && nextId !== activeProjectId) {
       setActiveProjectId(nextId)
     }
   }, [user?.id, availableProjects])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || !availableProjects || availableProjects.length === 0) return
     const storageKey = `altiflow_active_project_id_${user.id}`
 
     if (typeof window !== 'undefined') {
@@ -391,6 +397,9 @@ function AltiFlowMain() {
       onSidebarNavAction={(nextTab) => {
         if (nextTab === 'pipeline' && !canUsePipeline) return
         setActiveTab(nextTab)
+        if (typeof window !== 'undefined' && user?.id) {
+          localStorage.setItem(`altiflow_active_tab_${user.id}`, nextTab)
+        }
       }}
       onNotificationNavigate={handleNotificationNavigate}
       projectJobsCount={projectJobs.length}
