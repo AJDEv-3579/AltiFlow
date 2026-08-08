@@ -8,7 +8,7 @@ import TextInput from '@/components/ui/TextInput'
 import { api } from '@/services/api'
 
 export function EditFieldJobFormModal({ project, job, orgUsers = [], onDone, onCancel, canAssignManual = false, existingJobs = [] }) {
-  const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
+  const adminAssignees = orgUsers.filter(u => ['Admin', 'Super-Admin'].includes(u.role))
   const [form, setForm] = useState({
     title: job.title || '',
     capture_date: job.capture_date || '',

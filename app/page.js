@@ -78,7 +78,7 @@ function AltiFlowMain() {
   async function loadAdminData({ tab = activeTab, force = false } = {}) {
     if (!isInternal) return
     try {
-      const shouldLoadUsers = force || tab === 'users' || tab === 'team'
+      const shouldLoadUsers = force || tab === 'users' || tab === 'team' || tab === 'jobs' || tab === 'pipeline'
       const shouldLoadClients = force || tab === 'clients' || tab === 'users' || (isSuperAdmin && showCreateProject)
       const shouldLoadRecycle = isSuperAdmin && (force || tab === 'recycle-bin')
       const shouldLoadDeleteRequests = isSuperAdmin && (force || tab === 'entity-delete-requests')

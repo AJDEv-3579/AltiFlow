@@ -9,7 +9,7 @@ import { api } from '@/services/api'
 
 export function AddFieldJobForm({ project, orgUsers = [], onDone, onCancel, canAssignManual = false, existingJobs = [] }) {
   const BLANK_FLIGHT = () => ({ image_count: null, csv_rows: null })
-  const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
+  const adminAssignees = orgUsers.filter(u => ['Admin', 'Super-Admin'].includes(u.role))
   const [submitted, setSubmitted] = useState(false)
   const [form, setForm] = useState({
     title: '',

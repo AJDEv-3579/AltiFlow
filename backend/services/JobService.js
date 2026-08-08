@@ -112,7 +112,7 @@ export class JobService {
 
     if (assigneeId) {
       const assignee = await UserRepository.findById(assigneeId)
-      if (!assignee || assignee.role !== ADMIN) throw { message: 'assigned_to must be an Admin user', status: 400 }
+      if (!assignee || ![ADMIN, SUPER_ADMIN].includes(assignee.role)) throw { message: 'assigned_to must be an Admin user', status: 400 }
     }
 
     const targetCategory = VALID_CATS.includes(category) ? category : 'Stand Count'
@@ -244,7 +244,7 @@ export class JobService {
       if (![ADMIN, SUPER_ADMIN].includes(user.role)) throw { message: 'Only Admin can reassign jobs', status: 403 }
       if (body.assigned_to) {
         const assignee = await UserRepository.findById(body.assigned_to)
-        if (!assignee || assignee.role !== ADMIN) throw { message: 'assigned_to must be an Admin user', status: 400 }
+        if (!assignee || ![ADMIN, SUPER_ADMIN].includes(assignee.role)) throw { message: 'assigned_to must be an Admin user', status: 400 }
         allowed.assigned_to = body.assigned_to
       } else {
         allowed.assigned_to = null

@@ -28,7 +28,7 @@ export function JobCardDetailModal({
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
   const [commentsLog, setCommentsLog] = useState(job.comments_log || [])
-  const adminAssignees = orgUsers.filter(u => u.role === 'Admin')
+  const adminAssignees = orgUsers.filter(u => ['Admin', 'Super-Admin'].includes(u.role))
   const isMobile = useIsMobile()
   const flights = Array.isArray(job.flights) ? job.flights : []
   const totalImages = flights.reduce((s, f) => s + (f.image_count || 0), 0)
